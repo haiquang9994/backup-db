@@ -1,14 +1,14 @@
-# backupdb (Go rewrite)
+# backupdb
 
-Viết lại bằng Go cho service backup MySQL/PostgreSQL/MongoDB → Google Drive/S3 ở thư mục gốc repo, để deploy bằng Docker. **Độc lập hoàn toàn với code PHP ở root repo** — không sửa, không phụ thuộc lẫn nhau, có thể chạy song song trong lúc chuyển đổi.
+Service backup MySQL/PostgreSQL/MongoDB → Google Drive/S3, viết bằng Go, deploy bằng Docker.
 
-Khác biệt chính so với bản PHP:
+Tính năng chính:
 
-- Kết nối MySQL/PostgreSQL/MongoDB đích qua **TCP trực tiếp** (host/port/user/pass), không còn `docker exec` — không cần mount `/var/run/docker.sock`.
-- Danh sách database cần backup, lịch backup, và nơi lưu trữ đều nằm trong **SQLite**, quản lý qua **giao diện web** (`admin`) — không còn sửa tay `databases.txt`.
+- Kết nối MySQL/PostgreSQL/MongoDB đích qua **TCP trực tiếp** (host/port/user/pass) — không cần `docker exec`, không cần mount `/var/run/docker.sock`.
+- Danh sách database cần backup, lịch backup, và nơi lưu trữ đều nằm trong **SQLite**, quản lý qua **giao diện web** (`admin`).
 - **Lịch backup lưu trong SQLite**, mỗi database có thể có nhiều giờ backup/ngày, quản lý ngay trên trang Sửa database — không dùng crontab.
 - **Nhiều nơi lưu trữ cùng lúc**: có thể kết nối nhiều tài khoản Google Drive và nhiều cấu hình S3 (AWS S3, MinIO, R2, Spaces...), mỗi database tự chọn upload vào đâu, quản lý ở trang "Nơi lưu trữ" trong admin UI.
-- Worker (`consumer`) chạy vô hạn, không tự thoát sau N job như bản PHP; cũng không cần chờ có nơi lưu trữ nào được cấu hình mới chạy được — job nào chưa có đích hợp lệ thì chỉ job đó báo lỗi (Telegram alert), các job khác vẫn xử lý bình thường.
+- Worker (`consumer`) chạy vô hạn, không tự thoát sau N job; cũng không cần chờ có nơi lưu trữ nào được cấu hình mới chạy được — job nào chưa có đích hợp lệ thì chỉ job đó báo lỗi (Telegram alert), các job khác vẫn xử lý bình thường.
 
 ## Kiến trúc
 
