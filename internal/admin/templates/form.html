@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backupdb — {{if .Editing}}Sửa{{else}}Thêm{{end}} database</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>{{if .Editing}}Sửa database{{else}}Thêm database{{end}}</h1>
+      <p class="subtitle">{{if .Editing}}{{.Database.Name}}{{else}}Khai báo database mới cần sao lưu định kỳ.{{end}}</p>
+    </div>
+  </div>
+
+  <div class="card">
+  <form method="post" action="{{.Action}}" class="form">
+    <label>Tên database
+      <input type="text" name="name" value="{{.Database.Name}}" required>
+    </label>
+    <label>Driver
+      <select name="driver">
+        <option value="mysql" {{if eq .Database.Driver "mysql"}}selected{{end}}>mysql</option>
+        <option value="postgres" {{if eq .Database.Driver "postgres"}}selected{{end}}>postgres</option>
+        <option value="mongo" {{if eq .Database.Driver "mongo"}}selected{{end}}>mongo</option>
+      </select>
+    </label>
+    <label>Host
+      <input type="text" name="host" value="{{.Database.Host}}" required placeholder="tên container hoặc hostname">
+    </label>
+    <label>Port
+      <input type="text" name="port" value="{{.Database.Port}}" placeholder="mặc định theo driver">
+    </label>
+    <label>Username
+      <input type="text" name="username" value="{{.Database.Username}}">
+    </label>
+    <label>Password
+      <input type="password" name="password" value="{{.Database.Password}}">
+    </label>
+    <label>Auth DB (chỉ dùng cho mongo)
+      <input type="text" name="auth_db" value="{{.Database.AuthDB}}" placeholder="admin">
+    </label>
+    <label>Nơi lưu trữ backup
+      <select name="storage_target_id">
+        <option value="0">— Chưa chọn —</option>
+        {{$dbTargetID := .Database.StorageTargetID}}
+        {{range .StorageTargets}}
+        <option value="{{.ID}}" {{if eq $dbTargetID .ID}}selected{{end}}>
+          {{if eq .Kind "gdrive"}}[Google]{{else if eq .Kind "s3"}}[S3]{{end}} {{.Label}}
+        </option>
+        {{end}}
+      </select>
+    </label>
+    {{if not .StorageTargets}}<p class="hint">Chưa có nơi lưu trữ nào — vào trang <a href="/storage">Nơi lưu trữ</a> để kết nối Google Drive hoặc S3.</p>{{end}}
+    <label class="checkbox">
+      <input type="checkbox" name="enabled" {{if .Database.Enabled}}checked{{end}}>
+      Bật backup tự động theo lịch
+    </label>
+    <div class="form-actions">
+      <button type="submit">{{template "icon-plus"}} Lưu</button>
+      <a class="button" href="/">Huỷ</a>
+    </div>
+  </form>
+  </div>
+
+  {{if .Editing}}
+  <div class="card">
+  <h2>Lịch backup tự động (giờ Việt Nam)</h2>
+  <p class="hint">Có thể thêm nhiều giờ trong ngày — mỗi giờ sẽ tự đẩy 1 job backup riêng cho database này.</p>
+  <div class="table-wrap">
+  <table>
+  <thead><tr><th>Giờ</th><th>Chạy gần nhất</th><th></th></tr></thead>
+  <tbody>
+  {{range .Schedules}}
+  <tr>
+    <td>{{template "icon-clock"}} {{.TimeOfDay}}</td>
+    <td>{{if .LastRunDate}}{{.LastRunDate}}{{else}}<span class="hint">chưa chạy</span>{{end}}</td>
+    <td>
+      <button type="button" class="danger" data-action="/schedules/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá lịch {{.TimeOfDay}}?">{{template "icon-trash"}} Xoá</button>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td class="empty-state" colspan="3">Chưa có lịch nào — database sẽ không tự động backup.</td></tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
+  <form method="post" action="/databases/{{.Database.ID}}/schedules" class="form form-inline">
+    <label>Thêm giờ backup
+      <input type="time" name="time_of_day" required>
+    </label>
+    <button type="submit">{{template "icon-plus"}} Thêm</button>
+  </form>
+  </div>
+  {{else}}
+  <p class="hint">Lưu database trước, sau đó quay lại trang Sửa để thêm lịch backup.</p>
+  {{end}}
+
+  <a class="back-link" href="/">{{template "icon-back"}} Quay lại danh sách</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

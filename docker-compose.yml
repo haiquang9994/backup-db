@@ -1,0 +1,61 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - backupnet
+    restart: unless-stopped
+
+  consumer:
+    build: .
+    command: ["consumer"]
+    env_file: .env
+    volumes:
+      - ./google:/app/google       # credentials.json (OAuth app identity; tokens live in SQLite)
+      - sqlite-data:/app/data      # reads storage_targets to resolve each job's upload destination
+    networks:
+      - backupnet
+      - dbnet
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: ["scheduler"]
+    env_file: .env
+    volumes:
+      - sqlite-data:/app/data
+    networks:
+      - backupnet
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  admin:
+    build: .
+    command: ["admin"]
+    env_file: .env
+    ports:
+      - "${ADMIN_PORT:-8080}:${ADMIN_PORT:-8080}"
+    volumes:
+      - ./google:/app/google       # credentials.json, needed to start the Google OAuth flow
+      - sqlite-data:/app/data
+    networks:
+      - backupnet
+    restart: unless-stopped
+
+networks:
+  backupnet:
+  # External network shared with the MySQL/PostgreSQL/MongoDB containers to
+  # back up. Create it once with `docker network create dbnet` and attach
+  # your database containers to it (or point host/port at wherever they are
+  # already reachable from this network).
+  dbnet:
+    external: true
+
+volumes:
+  redis-data:
+  sqlite-data:

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backupdb — Danh sách</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Database backup</h1>
+      <p class="subtitle">Danh sách database đang được sao lưu định kỳ.</p>
+    </div>
+    <div class="page-head-actions">
+      <a class="button primary" href="/new">{{template "icon-plus"}} Thêm database</a>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+  <thead>
+  <tr><th>Tên</th><th>Driver</th><th>Host</th><th>Port</th><th>User</th><th>Trạng thái</th><th>Hành động</th></tr>
+  </thead>
+  <tbody>
+  {{range .}}
+  <tr>
+    <td>{{.Name}}</td>
+    <td><span class="tag">{{.Driver}}</span></td>
+    <td>{{.Host}}</td>
+    <td>{{.Port}}</td>
+    <td>{{.Username}}</td>
+    <td>{{if .Enabled}}<span class="badge on">Bật</span>{{else}}<span class="badge off">Tắt</span>{{end}}</td>
+    <td class="actions">
+      <button type="button" data-action="/backup-now/{{.ID}}" data-ajax="flash" data-confirm="Backup {{.Name}} ngay bây giờ?">{{template "icon-play"}} <span class="label">Backup ngay</span></button>
+      <a class="button" href="/edit/{{.ID}}">{{template "icon-pencil"}} Sửa</a>
+      <button type="button" data-action="/toggle/{{.ID}}" data-ajax="toggle-enabled">{{template "icon-power"}} <span class="label">{{if .Enabled}}Tắt{{else}}Bật{{end}}</span></button>
+      <button type="button" class="danger" data-action="/delete/{{.ID}}" data-ajax="remove-row" data-confirm="Xoá {{.Name}}?">{{template "icon-trash"}} Xoá</button>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td class="empty-state" colspan="7">Chưa có database nào — bấm "Thêm database" để bắt đầu.</td></tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
