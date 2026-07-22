@@ -70,3 +70,17 @@ function labelEl(btn) {
 function setLabel(btn, text) {
   labelEl(btn).textContent = text;
 }
+
+// Auth DB only applies to mongo — the form ships it pre-hidden/shown for the
+// current driver (server-rendered, avoids a flash of the wrong state), this
+// just keeps it in sync as the user changes the driver dropdown.
+const driverSelect = document.getElementById("driver-select");
+if (driverSelect) {
+  const mongoOnlyFields = document.querySelectorAll("[data-mongo-only]");
+  driverSelect.addEventListener("change", () => {
+    const isMongo = driverSelect.value === "mongo";
+    mongoOnlyFields.forEach((el) => {
+      el.style.display = isMongo ? "" : "none";
+    });
+  });
+}

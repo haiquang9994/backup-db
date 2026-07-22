@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backupdb — {{if .Editing}}Sửa{{else}}Kết nối{{end}} Google Drive</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>{{if .Editing}}Sửa tài khoản Google Drive{{else}}Kết nối tài khoản Google Drive{{end}}</h1>
+      <p class="subtitle">{{if .Editing}}{{.Target.Label}}{{else}}Kết nối một tài khoản Google Drive mới làm nơi lưu trữ backup.{{end}}</p>
+    </div>
+  </div>
+
+  <div class="card">
+  <form method="post" action="{{.Action}}" class="form">
+    <label>Tên gợi nhớ
+      <input type="text" name="label" value="{{.Target.Label}}" required placeholder="VD: Google Drive công ty A">
+    </label>
+
+    {{if .AuthURL}}
+    {{if .Editing}}
+    <p class="hint">Chỉ cần điền verification code nếu muốn đăng nhập lại (đổi sang tài khoản Google khác, hoặc làm mới quyền truy cập). Để trống nếu chỉ đổi tên gợi nhớ.</p>
+    {{end}}
+    <ol>
+      <li>Mở link này, đăng nhập Google, bấm Allow: <br><a href="{{.AuthURL}}" target="_blank" rel="noopener">{{.AuthURL}}</a></li>
+      <li>Trình duyệt sẽ báo lỗi không mở được trang — bình thường, nhìn lên thanh địa chỉ, copy giá trị sau <code>code=</code> (trước dấu <code>&amp;</code> tiếp theo).</li>
+    </ol>
+    <label>Verification code
+      <input type="text" name="code" {{if not .Editing}}required{{end}} autocomplete="off">
+    </label>
+    {{else}}
+    <p class="hint">Chưa đọc được google/credentials.json — kiểm tra biến GOOGLE_CREDENTIALS_FILE và file OAuth client đã đặt đúng chỗ chưa.</p>
+    {{end}}
+
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+    <div class="form-actions">
+      <button type="submit">{{template "icon-cloud"}} {{if .Editing}}Lưu{{else}}Kết nối{{end}}</button>
+      <a class="button" href="/storage">Huỷ</a>
+    </div>
+  </form>
+  </div>
+
+  <a class="back-link" href="/storage">{{template "icon-back"}} Quay lại Nơi lưu trữ</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

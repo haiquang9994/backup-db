@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backupdb — {{if .Editing}}Sửa{{else}}Thêm{{end}} lịch chung</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>{{if .Editing}}Sửa lịch chung{{else}}Thêm lịch chung{{end}}</h1>
+      <p class="subtitle">Lịch này tự đẩy job backup cho tất cả database được chọn bên dưới, vào đúng giờ đặt (giờ Việt Nam).</p>
+    </div>
+  </div>
+
+  <div class="card">
+  <form method="post" action="{{.Action}}" class="form">
+    <label>Giờ backup
+      <input type="time" name="time_of_day" value="{{.Schedule.TimeOfDay}}" required>
+    </label>
+    <label>Áp dụng cho database
+      <div class="checkbox-group">
+        {{$selected := .Selected}}
+        {{range .Databases}}
+        <label class="checkbox">
+          <input type="checkbox" name="database_ids" value="{{.ID}}" {{if index $selected .ID}}checked{{end}}>
+          {{.Name}} <span class="tag">{{.Driver}}</span>
+        </label>
+        {{else}}
+        <p class="hint">Chưa có database nào — vào trang danh sách để thêm trước.</p>
+        {{end}}
+      </div>
+    </label>
+
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+    <div class="form-actions">
+      <button type="submit">{{template "icon-plus"}} Lưu</button>
+      <a class="button" href="/shared-schedules">Huỷ</a>
+    </div>
+  </form>
+  </div>
+
+  <a class="back-link" href="/shared-schedules">{{template "icon-back"}} Quay lại Lịch chung</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

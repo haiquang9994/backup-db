@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backupdb — {{if .Editing}}Sửa{{else}}Thêm{{end}} cấu hình S3</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>{{if .Editing}}Sửa cấu hình S3{{else}}Thêm cấu hình S3{{end}}</h1>
+      <p class="subtitle">{{if .Editing}}{{.Target.Label}}{{else}}Dùng được với AWS S3 hoặc bất kỳ dịch vụ tương thích S3 nào (MinIO, Cloudflare R2, DigitalOcean Spaces, Wasabi, ...).{{end}}</p>
+    </div>
+  </div>
+
+  <div class="card">
+  <form method="post" action="{{.Action}}" class="form">
+    <label>Tên gợi nhớ
+      <input type="text" name="label" value="{{.Target.Label}}" required placeholder="VD: R2 lưu trữ lạnh">
+    </label>
+    <label>Endpoint
+      <input type="text" name="endpoint" value="{{.Config.Endpoint}}" required placeholder="s3.amazonaws.com hoặc host:port của MinIO/R2">
+    </label>
+    <label>Region
+      <input type="text" name="region" value="{{.Config.Region}}" placeholder="us-east-1 (để trống nếu không cần)">
+    </label>
+    <label>Bucket
+      <input type="text" name="bucket" value="{{.Config.Bucket}}" required>
+    </label>
+    <label>Access key
+      <input type="text" name="access_key" value="{{.Config.AccessKey}}" required>
+    </label>
+    <label>Secret key
+      <input type="password" name="secret_key" value="{{.Config.SecretKey}}" required>
+    </label>
+    <label>Prefix (đường dẫn thư mục trong bucket)
+      <input type="text" name="prefix" value="{{.Config.Prefix}}" placeholder="Để trống sẽ upload vào thư mục gốc của bucket">
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" name="use_ssl" {{if or (not .Editing) .Config.UseSSL}}checked{{end}}>
+      Dùng HTTPS
+    </label>
+
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+    <div class="form-actions">
+      <button type="submit">{{template "icon-cloud"}} {{if .Editing}}Lưu{{else}}Kết nối{{end}}</button>
+      <a class="button" href="/storage">Huỷ</a>
+    </div>
+  </form>
+  </div>
+
+  <a class="back-link" href="/storage">{{template "icon-back"}} Quay lại Nơi lưu trữ</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

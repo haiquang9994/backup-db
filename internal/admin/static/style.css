@@ -294,6 +294,17 @@ form.form button[type="submit"]:hover { filter: brightness(1.08); color: var(--a
 }
 .form input:focus, .form select:focus { border-color: var(--accent); outline: none; }
 .form-actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.25rem; }
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.checkbox-group label.checkbox { color: var(--fg); font-weight: 400; }
 .form-inline { flex-direction: row; align-items: flex-end; max-width: none; flex-wrap: wrap; }
 
 .hint { color: var(--muted); font-size: 0.85rem; line-height: 1.5; }

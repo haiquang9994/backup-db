@@ -22,7 +22,7 @@
       <input type="text" name="name" value="{{.Database.Name}}" required>
     </label>
     <label>Driver
-      <select name="driver">
+      <select name="driver" id="driver-select">
         <option value="mysql" {{if eq .Database.Driver "mysql"}}selected{{end}}>mysql</option>
         <option value="postgres" {{if eq .Database.Driver "postgres"}}selected{{end}}>postgres</option>
         <option value="mongo" {{if eq .Database.Driver "mongo"}}selected{{end}}>mongo</option>
@@ -40,7 +40,7 @@
     <label>Password
       <input type="password" name="password" value="{{.Database.Password}}">
     </label>
-    <label>Auth DB (chỉ dùng cho mongo)
+    <label data-mongo-only{{if ne .Database.Driver "mongo"}} style="display:none"{{end}}>Auth DB
       <input type="text" name="auth_db" value="{{.Database.AuthDB}}" placeholder="admin">
     </label>
     <label>Nơi lưu trữ backup

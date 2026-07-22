@@ -65,20 +65,30 @@ func checkAndEnqueue(ctx context.Context, reg *registry.Registry, q *queue.Clien
 	due, err := reg.ListDueSchedules(ctx, now)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "list due schedules:", err)
+	}
+	for _, item := range due {
+		enqueueDue(ctx, reg, q, now, item, reg.MarkScheduleRun)
+	}
+
+	dueShared, err := reg.ListDueSharedSchedules(ctx, now)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "list due shared schedules:", err)
+	}
+	for _, item := range dueShared {
+		enqueueDue(ctx, reg, q, now, item, reg.MarkSharedScheduleRun)
+	}
+}
+
+func enqueueDue(ctx context.Context, reg *registry.Registry, q *queue.Client, now time.Time, item registry.DueJob, markRun func(context.Context, int64, string) error) {
+	d := item.Database
+	job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID)
+
+	if err := q.Push(ctx, job); err != nil {
+		fmt.Fprintf(os.Stderr, "enqueue %s: %v\n", d.Name, err)
 		return
 	}
-
-	for _, item := range due {
-		d := item.Database
-		job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID)
-
-		if err := q.Push(ctx, job); err != nil {
-			fmt.Fprintf(os.Stderr, "enqueue %s: %v\n", d.Name, err)
-			continue
-		}
-		if err := reg.MarkScheduleRun(ctx, item.ScheduleID, now.Format("2006-01-02")); err != nil {
-			fmt.Fprintf(os.Stderr, "mark schedule %d run: %v\n", item.ScheduleID, err)
-		}
-		fmt.Printf("[%s] Enqueued %s (%s) via schedule at %s\n", now.Format("2006-01-02 15:04:05"), d.Name, d.Driver, now.Format("15:04"))
+	if err := markRun(ctx, item.ScheduleID, now.Format("2006-01-02")); err != nil {
+		fmt.Fprintf(os.Stderr, "mark schedule %d run: %v\n", item.ScheduleID, err)
 	}
+	fmt.Printf("[%s] Enqueued %s (%s) via schedule at %s\n", now.Format("2006-01-02 15:04:05"), d.Name, d.Driver, now.Format("15:04"))
 }

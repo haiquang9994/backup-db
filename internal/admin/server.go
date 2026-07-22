@@ -64,10 +64,24 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /backup-now/{id}", s.handleBackupNow)
 	mux.HandleFunc("POST /databases/{id}/schedules", s.handleAddSchedule)
 	mux.HandleFunc("POST /schedules/{id}/delete", s.handleDeleteSchedule)
+	mux.HandleFunc("GET /shared-schedules", s.handleSharedScheduleList)
+	mux.HandleFunc("GET /shared-schedules/new", s.handleSharedScheduleNewForm)
+	mux.HandleFunc("POST /shared-schedules", s.handleSharedScheduleCreate)
+	mux.HandleFunc("GET /shared-schedules/{id}/edit", s.handleSharedScheduleEditForm)
+	mux.HandleFunc("POST /shared-schedules/{id}", s.handleSharedScheduleUpdate)
+	mux.HandleFunc("POST /shared-schedules/{id}/toggle", s.handleSharedScheduleToggle)
+	mux.HandleFunc("POST /shared-schedules/{id}/delete", s.handleSharedScheduleDelete)
 	mux.HandleFunc("GET /storage", s.handleStorageList)
+	mux.HandleFunc("GET /storage/google/new", s.handleStorageGoogleNewForm)
 	mux.HandleFunc("POST /storage/google", s.handleStorageAddGoogle)
+	mux.HandleFunc("GET /storage/google/{id}/edit", s.handleStorageGoogleEditForm)
+	mux.HandleFunc("POST /storage/google/{id}", s.handleStorageUpdateGoogle)
+	mux.HandleFunc("POST /storage/google/{id}/delete", s.handleStorageDelete)
+	mux.HandleFunc("GET /storage/s3/new", s.handleStorageS3NewForm)
 	mux.HandleFunc("POST /storage/s3", s.handleStorageAddS3)
-	mux.HandleFunc("POST /storage/{id}/delete", s.handleStorageDelete)
+	mux.HandleFunc("GET /storage/s3/{id}/edit", s.handleStorageS3EditForm)
+	mux.HandleFunc("POST /storage/s3/{id}", s.handleStorageUpdateS3)
+	mux.HandleFunc("POST /storage/s3/{id}/delete", s.handleStorageDelete)
 
 	return s.basicAuth(mux)
 }
@@ -209,6 +223,212 @@ func (s *Server) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/edit/%d", sched.DatabaseID), http.StatusSeeOther)
 }
 
+func (s *Server) handleSharedScheduleList(w http.ResponseWriter, r *http.Request) {
+	schedules, err := s.reg.ListSharedSchedules(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := tmpl.ExecuteTemplate(w, "shared_schedules.html", schedules); err != nil {
+		log.Println("render shared schedules:", err)
+	}
+}
+
+// sharedScheduleFormData backs shared_schedule_form.html, used for both the
+// "add new" and "edit existing" pages.
+type sharedScheduleFormData struct {
+	Editing   bool
+	Action    string
+	Schedule  registry.SharedSchedule
+	Databases []registry.Database // every database, to render as checkboxes
+	Selected  map[int64]bool      // which of Databases are currently members
+	Error     string
+}
+
+func (s *Server) renderSharedScheduleForm(w http.ResponseWriter, data sharedScheduleFormData) {
+	if err := tmpl.ExecuteTemplate(w, "shared_schedule_form.html", data); err != nil {
+		log.Println("render shared schedule form:", err)
+	}
+}
+
+// renderSharedScheduleError re-fetches the database list (needed to render
+// the checkbox group again) and re-renders the form with an error, keeping
+// whatever the user had entered/selected.
+func (s *Server) renderSharedScheduleError(w http.ResponseWriter, r *http.Request, editing bool, action string, sched registry.SharedSchedule, databaseIDs []int64, errMsg string) {
+	dbs, err := s.reg.List(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderSharedScheduleForm(w, sharedScheduleFormData{
+		Editing: editing, Action: action, Schedule: sched, Databases: dbs, Selected: selectedSet(databaseIDs), Error: errMsg,
+	})
+}
+
+func selectedSet(ids []int64) map[int64]bool {
+	m := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
+}
+
+func (s *Server) handleSharedScheduleNewForm(w http.ResponseWriter, r *http.Request) {
+	dbs, err := s.reg.List(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderSharedScheduleForm(w, sharedScheduleFormData{Action: "/shared-schedules", Databases: dbs, Selected: map[int64]bool{}})
+}
+
+func (s *Server) handleSharedScheduleEditForm(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	sched, err := s.reg.GetSharedSchedule(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if sched == nil {
+		http.NotFound(w, r)
+		return
+	}
+	dbs, err := s.reg.List(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	selected := make(map[int64]bool, len(sched.Databases))
+	for _, d := range sched.Databases {
+		selected[d.ID] = true
+	}
+	s.renderSharedScheduleForm(w, sharedScheduleFormData{
+		Editing:   true,
+		Action:    fmt.Sprintf("/shared-schedules/%d", id),
+		Schedule:  *sched,
+		Databases: dbs,
+		Selected:  selected,
+	})
+}
+
+// parseSharedScheduleForm reads the time and the set of checked database
+// checkboxes shared by the add and edit forms.
+func parseSharedScheduleForm(r *http.Request) (timeOfDay string, databaseIDs []int64, err error) {
+	if err = r.ParseForm(); err != nil {
+		return
+	}
+	timeOfDay = strings.TrimSpace(r.FormValue("time_of_day"))
+	for _, v := range r.Form["database_ids"] {
+		id, convErr := strconv.ParseInt(v, 10, 64)
+		if convErr != nil {
+			continue
+		}
+		databaseIDs = append(databaseIDs, id)
+	}
+	return
+}
+
+func (s *Server) handleSharedScheduleCreate(w http.ResponseWriter, r *http.Request) {
+	timeOfDay, databaseIDs, err := parseSharedScheduleForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sched := registry.SharedSchedule{TimeOfDay: timeOfDay}
+
+	if _, err := time.Parse("15:04", timeOfDay); err != nil {
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", sched, databaseIDs, "Giờ không hợp lệ, cần dạng HH:MM")
+		return
+	}
+	if len(databaseIDs) == 0 {
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", sched, databaseIDs, "Chọn ít nhất 1 database")
+		return
+	}
+	if _, err := s.reg.CreateSharedSchedule(r.Context(), timeOfDay, databaseIDs); err != nil {
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", sched, databaseIDs, err.Error())
+		return
+	}
+	http.Redirect(w, r, "/shared-schedules", http.StatusSeeOther)
+}
+
+func (s *Server) handleSharedScheduleUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	existing, err := s.reg.GetSharedSchedule(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if existing == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	timeOfDay, databaseIDs, err := parseSharedScheduleForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	action := fmt.Sprintf("/shared-schedules/%d", id)
+	sched := registry.SharedSchedule{ID: id, TimeOfDay: timeOfDay, Enabled: existing.Enabled, LastRunDate: existing.LastRunDate, CreatedAt: existing.CreatedAt}
+
+	if _, err := time.Parse("15:04", timeOfDay); err != nil {
+		s.renderSharedScheduleError(w, r, true, action, sched, databaseIDs, "Giờ không hợp lệ, cần dạng HH:MM")
+		return
+	}
+	if len(databaseIDs) == 0 {
+		s.renderSharedScheduleError(w, r, true, action, sched, databaseIDs, "Chọn ít nhất 1 database")
+		return
+	}
+	if err := s.reg.UpdateSharedSchedule(r.Context(), id, timeOfDay, databaseIDs); err != nil {
+		s.renderSharedScheduleError(w, r, true, action, sched, databaseIDs, err.Error())
+		return
+	}
+	http.Redirect(w, r, "/shared-schedules", http.StatusSeeOther)
+}
+
+func (s *Server) handleSharedScheduleToggle(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	sched, err := s.reg.GetSharedSchedule(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if sched == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.reg.SetSharedScheduleEnabled(r.Context(), id, !sched.Enabled); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/shared-schedules", http.StatusSeeOther)
+}
+
+func (s *Server) handleSharedScheduleDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := s.reg.DeleteSharedSchedule(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/shared-schedules", http.StatusSeeOther)
+}
+
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -295,32 +515,72 @@ type gdriveConfig struct {
 	Email string `json:"email"`
 }
 
-type storageData struct {
-	Targets []registry.StorageTarget
-	AuthURL string
-	Error   string
+// s3Config mirrors internal/storage/s3store's shape for kind="s3" — same
+// reasoning as gdriveConfig above.
+type s3Config struct {
+	Endpoint  string `json:"endpoint"`
+	Region    string `json:"region"`
+	Bucket    string `json:"bucket"`
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+	UseSSL    bool   `json:"use_ssl"`
+	Prefix    string `json:"prefix"`
 }
 
 func (s *Server) handleStorageList(w http.ResponseWriter, r *http.Request) {
-	s.renderStorage(w, r, "")
-}
-
-func (s *Server) renderStorage(w http.ResponseWriter, r *http.Request, errMsg string) {
 	targets, err := s.reg.ListStorageTargets(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	authURL, err := gdrive.AuthURL(s.googleCredentialsFile)
-	if err != nil {
-		// Non-fatal: S3 targets can still be managed even if
-		// credentials.json for Google isn't set up yet.
-		authURL = ""
-	}
-	data := storageData{Targets: targets, AuthURL: authURL, Error: errMsg}
-	if err := tmpl.ExecuteTemplate(w, "storage.html", data); err != nil {
+	if err := tmpl.ExecuteTemplate(w, "storage.html", struct{ Targets []registry.StorageTarget }{targets}); err != nil {
 		log.Println("render storage:", err)
 	}
+}
+
+// googleFormData backs storage_google.html, used for both the "connect new
+// account" and "edit existing account" pages.
+type googleFormData struct {
+	Editing bool
+	Action  string
+	Target  registry.StorageTarget
+	AuthURL string
+	Error   string
+}
+
+func (s *Server) renderGoogleForm(w http.ResponseWriter, data googleFormData) {
+	if err := tmpl.ExecuteTemplate(w, "storage_google.html", data); err != nil {
+		log.Println("render storage google form:", err)
+	}
+}
+
+func (s *Server) handleStorageGoogleNewForm(w http.ResponseWriter, r *http.Request) {
+	authURL, _ := gdrive.AuthURL(s.googleCredentialsFile) // non-fatal: page still explains what's missing
+	s.renderGoogleForm(w, googleFormData{Action: "/storage/google", AuthURL: authURL})
+}
+
+func (s *Server) handleStorageGoogleEditForm(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	target, err := s.reg.GetStorageTarget(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if target == nil || target.Kind != "gdrive" {
+		http.NotFound(w, r)
+		return
+	}
+	authURL, _ := gdrive.AuthURL(s.googleCredentialsFile)
+	s.renderGoogleForm(w, googleFormData{
+		Editing: true,
+		Action:  fmt.Sprintf("/storage/google/%d", id),
+		Target:  *target,
+		AuthURL: authURL,
+	})
 }
 
 func (s *Server) handleStorageAddGoogle(w http.ResponseWriter, r *http.Request) {
@@ -330,62 +590,244 @@ func (s *Server) handleStorageAddGoogle(w http.ResponseWriter, r *http.Request) 
 	}
 	label := strings.TrimSpace(r.FormValue("label"))
 	code := strings.TrimSpace(r.FormValue("code"))
+	authURL, _ := gdrive.AuthURL(s.googleCredentialsFile)
+	data := googleFormData{Action: "/storage/google", AuthURL: authURL, Target: registry.StorageTarget{Label: label}}
+
 	if label == "" || code == "" {
-		s.renderStorage(w, r, "Vui lòng nhập tên gợi nhớ và verification code")
+		data.Error = "Vui lòng nhập tên gợi nhớ và verification code"
+		s.renderGoogleForm(w, data)
 		return
 	}
 
 	tok, err := gdrive.Exchange(s.googleCredentialsFile, code)
 	if err != nil {
-		s.renderStorage(w, r, err.Error())
+		data.Error = err.Error()
+		s.renderGoogleForm(w, data)
 		return
 	}
 	email, _ := gdrive.FetchEmail(r.Context(), tok) // best-effort
 
 	tokJSON, err := json.Marshal(tok)
 	if err != nil {
-		s.renderStorage(w, r, err.Error())
+		data.Error = err.Error()
+		s.renderGoogleForm(w, data)
 		return
 	}
 	cfgJSON, err := json.Marshal(gdriveConfig{Token: string(tokJSON), Email: email})
 	if err != nil {
-		s.renderStorage(w, r, err.Error())
+		data.Error = err.Error()
+		s.renderGoogleForm(w, data)
 		return
 	}
 	if _, err := s.reg.CreateStorageTarget(r.Context(), "gdrive", label, string(cfgJSON)); err != nil {
-		s.renderStorage(w, r, err.Error())
+		data.Error = err.Error()
+		s.renderGoogleForm(w, data)
 		return
 	}
 	http.Redirect(w, r, "/storage", http.StatusSeeOther)
 }
 
-func (s *Server) handleStorageAddS3(w http.ResponseWriter, r *http.Request) {
+// handleStorageUpdateGoogle always renames the target; it only re-runs the
+// OAuth exchange (replacing the stored token/email) when a verification
+// code was actually submitted, so a plain rename doesn't require logging in
+// again.
+func (s *Server) handleStorageUpdateGoogle(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	target, err := s.reg.GetStorageTarget(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if target == nil || target.Kind != "gdrive" {
+		http.NotFound(w, r)
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	label := strings.TrimSpace(r.FormValue("label"))
+	code := strings.TrimSpace(r.FormValue("code"))
+	authURL, _ := gdrive.AuthURL(s.googleCredentialsFile)
+	action := fmt.Sprintf("/storage/google/%d", id)
+	data := googleFormData{Editing: true, Action: action, Target: *target, AuthURL: authURL}
+
 	if label == "" {
-		s.renderStorage(w, r, "Vui lòng nhập tên gợi nhớ cho cấu hình S3")
+		data.Error = "Vui lòng nhập tên gợi nhớ"
+		s.renderGoogleForm(w, data)
 		return
 	}
+	if err := s.reg.UpdateStorageTargetLabel(r.Context(), id, label); err != nil {
+		data.Error = err.Error()
+		s.renderGoogleForm(w, data)
+		return
+	}
+	data.Target.Label = label
 
-	cfg := map[string]any{
-		"endpoint":   strings.TrimSpace(r.FormValue("endpoint")),
-		"region":     strings.TrimSpace(r.FormValue("region")),
-		"bucket":     strings.TrimSpace(r.FormValue("bucket")),
-		"access_key": strings.TrimSpace(r.FormValue("access_key")),
-		"secret_key": strings.TrimSpace(r.FormValue("secret_key")),
-		"use_ssl":    r.FormValue("use_ssl") == "on",
-		"prefix":     strings.TrimSpace(r.FormValue("prefix")),
+	if code != "" {
+		tok, err := gdrive.Exchange(s.googleCredentialsFile, code)
+		if err != nil {
+			data.Error = err.Error()
+			s.renderGoogleForm(w, data)
+			return
+		}
+		email, _ := gdrive.FetchEmail(r.Context(), tok) // best-effort
+
+		tokJSON, err := json.Marshal(tok)
+		if err != nil {
+			data.Error = err.Error()
+			s.renderGoogleForm(w, data)
+			return
+		}
+		cfgJSON, err := json.Marshal(gdriveConfig{Token: string(tokJSON), Email: email})
+		if err != nil {
+			data.Error = err.Error()
+			s.renderGoogleForm(w, data)
+			return
+		}
+		if err := s.reg.UpdateStorageTargetConfig(r.Context(), id, string(cfgJSON)); err != nil {
+			data.Error = err.Error()
+			s.renderGoogleForm(w, data)
+			return
+		}
+	}
+
+	http.Redirect(w, r, "/storage", http.StatusSeeOther)
+}
+
+// s3FormData backs storage_s3.html, used for both the "add new" and "edit
+// existing" pages.
+type s3FormData struct {
+	Editing bool
+	Action  string
+	Target  registry.StorageTarget
+	Config  s3Config
+	Error   string
+}
+
+func (s *Server) renderS3Form(w http.ResponseWriter, data s3FormData) {
+	if err := tmpl.ExecuteTemplate(w, "storage_s3.html", data); err != nil {
+		log.Println("render storage s3 form:", err)
+	}
+}
+
+func (s *Server) handleStorageS3NewForm(w http.ResponseWriter, r *http.Request) {
+	s.renderS3Form(w, s3FormData{Action: "/storage/s3"})
+}
+
+func (s *Server) handleStorageS3EditForm(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	target, err := s.reg.GetStorageTarget(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if target == nil || target.Kind != "s3" {
+		http.NotFound(w, r)
+		return
+	}
+	var cfg s3Config
+	if err := json.Unmarshal([]byte(target.Config), &cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderS3Form(w, s3FormData{Editing: true, Action: fmt.Sprintf("/storage/s3/%d", id), Target: *target, Config: cfg})
+}
+
+// parseS3Form reads the label and s3Config fields shared by the add and
+// edit forms.
+func parseS3Form(r *http.Request) (label string, cfg s3Config, err error) {
+	if err = r.ParseForm(); err != nil {
+		return
+	}
+	label = strings.TrimSpace(r.FormValue("label"))
+	cfg = s3Config{
+		Endpoint:  strings.TrimSpace(r.FormValue("endpoint")),
+		Region:    strings.TrimSpace(r.FormValue("region")),
+		Bucket:    strings.TrimSpace(r.FormValue("bucket")),
+		AccessKey: strings.TrimSpace(r.FormValue("access_key")),
+		SecretKey: strings.TrimSpace(r.FormValue("secret_key")),
+		UseSSL:    r.FormValue("use_ssl") == "on",
+		Prefix:    strings.TrimSpace(r.FormValue("prefix")),
+	}
+	return
+}
+
+func (s *Server) handleStorageAddS3(w http.ResponseWriter, r *http.Request) {
+	label, cfg, err := parseS3Form(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data := s3FormData{Action: "/storage/s3", Config: cfg, Target: registry.StorageTarget{Label: label}}
+
+	if label == "" {
+		data.Error = "Vui lòng nhập tên gợi nhớ cho cấu hình S3"
+		s.renderS3Form(w, data)
+		return
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
-		s.renderStorage(w, r, err.Error())
+		data.Error = err.Error()
+		s.renderS3Form(w, data)
 		return
 	}
 	if _, err := s.reg.CreateStorageTarget(r.Context(), "s3", label, string(cfgJSON)); err != nil {
-		s.renderStorage(w, r, err.Error())
+		data.Error = err.Error()
+		s.renderS3Form(w, data)
+		return
+	}
+	http.Redirect(w, r, "/storage", http.StatusSeeOther)
+}
+
+func (s *Server) handleStorageUpdateS3(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	target, err := s.reg.GetStorageTarget(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if target == nil || target.Kind != "s3" {
+		http.NotFound(w, r)
+		return
+	}
+
+	label, cfg, err := parseS3Form(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	action := fmt.Sprintf("/storage/s3/%d", id)
+	data := s3FormData{Editing: true, Action: action, Target: *target, Config: cfg}
+
+	if label == "" {
+		data.Error = "Vui lòng nhập tên gợi nhớ"
+		s.renderS3Form(w, data)
+		return
+	}
+	data.Target.Label = label
+	cfgJSON, err := json.Marshal(cfg)
+	if err != nil {
+		data.Error = err.Error()
+		s.renderS3Form(w, data)
+		return
+	}
+	if err := s.reg.UpdateStorageTargetLabelConfig(r.Context(), id, label, string(cfgJSON)); err != nil {
+		data.Error = err.Error()
+		s.renderS3Form(w, data)
 		return
 	}
 	http.Redirect(w, r, "/storage", http.StatusSeeOther)

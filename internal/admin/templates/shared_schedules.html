@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backupdb — Lịch chung</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Lịch backup chung</h1>
+      <p class="subtitle">Một lịch chung tự đẩy job backup cho nhiều database cùng lúc, ngoài lịch riêng đặt ở từng database (trang Sửa database).</p>
+    </div>
+    <div class="page-head-actions">
+      <a class="button primary" href="/shared-schedules/new">{{template "icon-plus"}} Thêm lịch chung</a>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+  <thead><tr><th>Giờ</th><th>Áp dụng cho</th><th>Chạy gần nhất</th><th>Trạng thái</th><th>Hành động</th></tr></thead>
+  <tbody>
+  {{range .}}
+  <tr>
+    <td>{{template "icon-clock"}} {{.TimeOfDay}}</td>
+    <td>
+      {{range .Databases}}<span class="tag">{{.Name}}</span> {{else}}<span class="hint">Chưa chọn database</span>{{end}}
+    </td>
+    <td>{{if .LastRunDate}}{{.LastRunDate}}{{else}}<span class="hint">chưa chạy</span>{{end}}</td>
+    <td>{{if .Enabled}}<span class="badge on">Bật</span>{{else}}<span class="badge off">Tắt</span>{{end}}</td>
+    <td class="actions">
+      <button type="button" data-action="/shared-schedules/{{.ID}}/toggle" data-ajax="toggle-enabled">{{template "icon-power"}} <span class="label">{{if .Enabled}}Tắt{{else}}Bật{{end}}</span></button>
+      <a class="button" href="/shared-schedules/{{.ID}}/edit">{{template "icon-pencil"}} Sửa</a>
+      <button type="button" class="danger" data-action="/shared-schedules/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá lịch {{.TimeOfDay}}?">{{template "icon-trash"}} Xoá</button>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td class="empty-state" colspan="5">Chưa có lịch chung nào — bấm "Thêm lịch chung" để bắt đầu.</td></tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
+
+  <a class="back-link" href="/">{{template "icon-back"}} Quay lại danh sách database</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

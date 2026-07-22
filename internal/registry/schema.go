@@ -45,4 +45,25 @@ CREATE TABLE IF NOT EXISTS schedules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedules_database_id ON schedules(database_id);
+
+-- shared_schedules is the same "fire at HH:MM, once per day" idea as
+-- schedules, but not owned by a single database — shared_schedule_databases
+-- is a many-to-many join so one shared schedule can back up any number of
+-- databases, and a database can be covered by any number of shared
+-- schedules on top of its own per-database ones.
+CREATE TABLE IF NOT EXISTS shared_schedules (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	time_of_day   TEXT NOT NULL,
+	enabled       INTEGER NOT NULL DEFAULT 1,
+	last_run_date TEXT NOT NULL DEFAULT '',
+	created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS shared_schedule_databases (
+	shared_schedule_id INTEGER NOT NULL REFERENCES shared_schedules(id) ON DELETE CASCADE,
+	database_id        INTEGER NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+	PRIMARY KEY (shared_schedule_id, database_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shared_schedule_databases_database_id ON shared_schedule_databases(database_id);
 `

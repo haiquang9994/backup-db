@@ -9,6 +9,7 @@ services:
     restart: unless-stopped
 
   consumer:
+    image: backupdb:latest
     build: .
     command: ["consumer"]
     env_file: .env
@@ -23,6 +24,7 @@ services:
     restart: unless-stopped
 
   scheduler:
+    image: backupdb:latest
     build: .
     command: ["scheduler"]
     env_file: .env
@@ -35,6 +37,7 @@ services:
     restart: unless-stopped
 
   admin:
+    image: backupdb:latest
     build: .
     command: ["admin"]
     env_file: .env

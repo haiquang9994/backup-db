@@ -292,6 +292,187 @@ func (r *Registry) MarkScheduleRun(ctx context.Context, id int64, date string) e
 	return err
 }
 
+// SharedSchedule is a "fire at HH:MM, once per day" trigger, like Schedule,
+// but applied to any number of databases at once (see
+// shared_schedule_databases) instead of belonging to just one.
+type SharedSchedule struct {
+	ID          int64
+	TimeOfDay   string
+	Enabled     bool
+	LastRunDate string
+	CreatedAt   string
+	Databases   []Database // member databases, loaded via join
+}
+
+func (r *Registry) ListSharedSchedules(ctx context.Context) ([]SharedSchedule, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, time_of_day, enabled, last_run_date, created_at FROM shared_schedules ORDER BY time_of_day",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SharedSchedule
+	for rows.Next() {
+		var s SharedSchedule
+		var enabled int
+		if err := rows.Scan(&s.ID, &s.TimeOfDay, &enabled, &s.LastRunDate, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		s.Enabled = enabled != 0
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range out {
+		dbs, err := r.ListDatabasesForSharedSchedule(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Databases = dbs
+	}
+	return out, nil
+}
+
+func (r *Registry) GetSharedSchedule(ctx context.Context, id int64) (*SharedSchedule, error) {
+	row := r.db.QueryRowContext(ctx,
+		"SELECT id, time_of_day, enabled, last_run_date, created_at FROM shared_schedules WHERE id = ?", id,
+	)
+	var s SharedSchedule
+	var enabled int
+	err := row.Scan(&s.ID, &s.TimeOfDay, &enabled, &s.LastRunDate, &s.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.Enabled = enabled != 0
+
+	dbs, err := r.ListDatabasesForSharedSchedule(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.Databases = dbs
+	return &s, nil
+}
+
+// ListDatabasesForSharedSchedule returns the databases a shared schedule
+// currently applies to.
+func (r *Registry) ListDatabasesForSharedSchedule(ctx context.Context, sharedScheduleID int64) ([]Database, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.enabled, d.created_at, d.updated_at
+		FROM databases d
+		JOIN shared_schedule_databases ssd ON ssd.database_id = d.id
+		WHERE ssd.shared_schedule_id = ?
+		ORDER BY d.name
+	`, sharedScheduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Database
+	for rows.Next() {
+		d, err := scanDatabase(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (r *Registry) CreateSharedSchedule(ctx context.Context, timeOfDay string, databaseIDs []int64) (int64, error) {
+	res, err := r.db.ExecContext(ctx, "INSERT INTO shared_schedules (time_of_day) VALUES (?)", timeOfDay)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := r.setSharedScheduleDatabases(ctx, id, databaseIDs); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// UpdateSharedSchedule overwrites the time and the full set of member
+// databases (the edit form resubmits both together).
+func (r *Registry) UpdateSharedSchedule(ctx context.Context, id int64, timeOfDay string, databaseIDs []int64) error {
+	if _, err := r.db.ExecContext(ctx, "UPDATE shared_schedules SET time_of_day = ? WHERE id = ?", timeOfDay, id); err != nil {
+		return err
+	}
+	return r.setSharedScheduleDatabases(ctx, id, databaseIDs)
+}
+
+func (r *Registry) setSharedScheduleDatabases(ctx context.Context, sharedScheduleID int64, databaseIDs []int64) error {
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM shared_schedule_databases WHERE shared_schedule_id = ?", sharedScheduleID); err != nil {
+		return err
+	}
+	for _, dbID := range databaseIDs {
+		if _, err := r.db.ExecContext(ctx,
+			"INSERT INTO shared_schedule_databases (shared_schedule_id, database_id) VALUES (?, ?)",
+			sharedScheduleID, dbID,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Registry) SetSharedScheduleEnabled(ctx context.Context, id int64, enabled bool) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE shared_schedules SET enabled = ? WHERE id = ?", boolToInt(enabled), id)
+	return err
+}
+
+func (r *Registry) DeleteSharedSchedule(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM shared_schedules WHERE id = ?", id)
+	return err
+}
+
+// ListDueSharedSchedules mirrors ListDueSchedules, but returns one row per
+// (shared schedule, member database) pair — callers mark the shared
+// schedule's run once per row, which is idempotent (same date each time).
+func (r *Registry) ListDueSharedSchedules(ctx context.Context, now time.Time) ([]DueJob, error) {
+	hhmm := now.Format("15:04")
+	today := now.Format("2006-01-02")
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT ss.id, d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.enabled, d.created_at, d.updated_at
+		FROM shared_schedules ss
+		JOIN shared_schedule_databases ssd ON ssd.shared_schedule_id = ss.id
+		JOIN databases d ON d.id = ssd.database_id
+		WHERE ss.enabled = 1 AND d.enabled = 1 AND ss.time_of_day = ? AND ss.last_run_date != ?
+	`, hhmm, today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DueJob
+	for rows.Next() {
+		var scheduleID int64
+		var d Database
+		var enabled int
+		if err := rows.Scan(&scheduleID, &d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &enabled, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			return nil, err
+		}
+		d.Enabled = enabled != 0
+		out = append(out, DueJob{ScheduleID: scheduleID, Database: d})
+	}
+	return out, rows.Err()
+}
+
+func (r *Registry) MarkSharedScheduleRun(ctx context.Context, id int64, date string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE shared_schedules SET last_run_date = ? WHERE id = ?", date, id)
+	return err
+}
+
 // StorageTarget is one configured upload destination: a Google Drive
 // account (Kind "gdrive") or an S3-compatible bucket (Kind "s3"). Config is
 // a kind-specific JSON blob — internal/storage knows how to interpret it
@@ -357,6 +538,26 @@ func (r *Registry) UpdateStorageTargetConfig(ctx context.Context, id int64, conf
 	_, err := r.db.ExecContext(ctx,
 		"UPDATE storage_targets SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		config, id,
+	)
+	return err
+}
+
+// UpdateStorageTargetLabel renames a target in place — used for a
+// Google Drive "rename only" edit that doesn't touch its OAuth token.
+func (r *Registry) UpdateStorageTargetLabel(ctx context.Context, id int64, label string) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE storage_targets SET label = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		label, id,
+	)
+	return err
+}
+
+// UpdateStorageTargetLabelConfig overwrites both the label and config blob —
+// used by the S3 edit form, which resubmits every field at once.
+func (r *Registry) UpdateStorageTargetLabelConfig(ctx context.Context, id int64, label, config string) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE storage_targets SET label = ?, config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		label, config, id,
 	)
 	return err
 }

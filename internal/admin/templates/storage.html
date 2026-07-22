@@ -14,6 +14,10 @@
       <h1>Nơi lưu trữ backup</h1>
       <p class="subtitle">Mỗi database chọn 1 trong các nơi lưu trữ dưới đây (trang Sửa database). Có thể kết nối nhiều tài khoản Google và nhiều cấu hình S3 cùng lúc.</p>
     </div>
+    <div class="page-head-actions">
+      <a class="button" href="/storage/google/new">{{template "icon-cloud"}} Kết nối Google Drive</a>
+      <a class="button primary" href="/storage/s3/new">{{template "icon-plus"}} Thêm cấu hình S3</a>
+    </div>
   </div>
 
   <div class="table-wrap">
@@ -29,8 +33,14 @@
     </td>
     <td>{{.Label}}</td>
     <td>{{.CreatedAt}}</td>
-    <td>
-      <button type="button" class="danger" data-action="/storage/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá {{.Label}}? Database đang dùng nơi lưu này sẽ upload lỗi cho tới khi bạn đổi đích khác.">{{template "icon-trash"}} Xoá</button>
+    <td class="actions">
+      {{if eq .Kind "gdrive"}}
+      <a class="button" href="/storage/google/{{.ID}}/edit">{{template "icon-pencil"}} Sửa</a>
+      <button type="button" class="danger" data-action="/storage/google/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá {{.Label}}? Database đang dùng nơi lưu này sẽ upload lỗi cho tới khi bạn đổi đích khác.">{{template "icon-trash"}} Xoá</button>
+      {{else if eq .Kind "s3"}}
+      <a class="button" href="/storage/s3/{{.ID}}/edit">{{template "icon-pencil"}} Sửa</a>
+      <button type="button" class="danger" data-action="/storage/s3/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá {{.Label}}? Database đang dùng nơi lưu này sẽ upload lỗi cho tới khi bạn đổi đích khác.">{{template "icon-trash"}} Xoá</button>
+      {{end}}
     </td>
   </tr>
   {{else}}
@@ -38,63 +48,6 @@
   {{end}}
   </tbody>
   </table>
-  </div>
-
-  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-
-  <div class="card">
-  <h2>Thêm tài khoản Google Drive</h2>
-  {{if .AuthURL}}
-  <ol>
-    <li>Mở link này, đăng nhập Google, bấm Allow: <br><a href="{{.AuthURL}}" target="_blank" rel="noopener">{{.AuthURL}}</a></li>
-    <li>Trình duyệt sẽ báo lỗi không mở được trang — bình thường, nhìn lên thanh địa chỉ, copy giá trị sau <code>code=</code> (trước dấu <code>&amp;</code> tiếp theo).</li>
-    <li>Đặt tên gợi nhớ và dán code vào form dưới.</li>
-  </ol>
-  <form method="post" action="/storage/google" class="form">
-    <label>Tên gợi nhớ
-      <input type="text" name="label" required placeholder="VD: Google Drive công ty A">
-    </label>
-    <label>Verification code
-      <input type="text" name="code" required autocomplete="off">
-    </label>
-    <button type="submit">{{template "icon-cloud"}} Kết nối</button>
-  </form>
-  {{else}}
-  <p class="hint">Chưa đọc được google/credentials.json — kiểm tra biến GOOGLE_CREDENTIALS_FILE và file OAuth client đã đặt đúng chỗ chưa.</p>
-  {{end}}
-  </div>
-
-  <div class="card">
-  <h2>Thêm cấu hình S3</h2>
-  <p class="hint">Dùng được với AWS S3 hoặc bất kỳ dịch vụ tương thích S3 nào (MinIO, Cloudflare R2, DigitalOcean Spaces, ...).</p>
-  <form method="post" action="/storage/s3" class="form">
-    <label>Tên gợi nhớ
-      <input type="text" name="label" required placeholder="VD: R2 lưu trữ lạnh">
-    </label>
-    <label>Endpoint
-      <input type="text" name="endpoint" required placeholder="s3.amazonaws.com hoặc host:port của MinIO/R2">
-    </label>
-    <label>Region
-      <input type="text" name="region" placeholder="us-east-1 (để trống nếu không cần)">
-    </label>
-    <label>Bucket
-      <input type="text" name="bucket" required>
-    </label>
-    <label>Access key
-      <input type="text" name="access_key" required>
-    </label>
-    <label>Secret key
-      <input type="password" name="secret_key" required>
-    </label>
-    <label>Prefix (thư mục gốc trong bucket)
-      <input type="text" name="prefix" placeholder="Backups">
-    </label>
-    <label class="checkbox">
-      <input type="checkbox" name="use_ssl" checked>
-      Dùng HTTPS
-    </label>
-    <button type="submit">{{template "icon-cloud"}} Kết nối</button>
-  </form>
   </div>
 
   <a class="back-link" href="/">{{template "icon-back"}} Quay lại danh sách database</a>
