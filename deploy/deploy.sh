@@ -23,6 +23,9 @@ trap 'rm -f "$LOCAL_TAR"' EXIT
 echo "==> Saving image to $LOCAL_TAR"
 docker save backupdb:latest | gzip > "$LOCAL_TAR"
 
+echo "==> Pruning dangling images left over from previous builds (local)"
+docker image prune -f >/dev/null
+
 echo "==> Uploading to $DEPLOY_HOST"
 REMOTE_TAR="$(ssh "$DEPLOY_HOST" mktemp --suffix=.tar.gz)"
 scp "$LOCAL_TAR" "$DEPLOY_HOST:$REMOTE_TAR"
@@ -34,6 +37,7 @@ ssh "$DEPLOY_HOST" "
   rm -f '$REMOTE_TAR'
   cd '$DEPLOY_PATH'
   docker compose up -d
+  docker image prune -f >/dev/null
 "
 
 echo "==> Done"
