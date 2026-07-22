@@ -1219,10 +1219,6 @@ func (s *Server) handleNotifyDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/notify", http.StatusSeeOther)
 }
 
-// logListLimit caps how far back the "Nhật ký" page looks — it's meant for
-// "what happened recently", not a full audit trail with pagination.
-const logListLimit = 300
-
 // logRunView adds a human-readable duration ("2.3s" instead of a raw
 // millisecond count) to a BackupRun for display.
 type logRunView struct {
@@ -1231,7 +1227,15 @@ type logRunView struct {
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	runs, err := s.reg.ListBackupRuns(r.Context(), logListLimit)
+	total, err := s.reg.CountBackupRuns(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pagination := newPagination(page, total, s.cfg.LogListLimit, "/logs")
+
+	runs, err := s.reg.ListBackupRuns(r.Context(), s.cfg.LogListLimit, pagination.Offset(s.cfg.LogListLimit))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1242,9 +1246,9 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		views[i] = logRunView{BackupRun: run, Duration: d.String()}
 	}
 	data := struct {
-		Runs  []logRunView
-		Limit int
-	}{views, logListLimit}
+		Runs       []logRunView
+		Pagination Pagination
+	}{views, pagination}
 	if err := tmpl.ExecuteTemplate(w, "logs.html", data); err != nil {
 		log.Println("render logs:", err)
 	}

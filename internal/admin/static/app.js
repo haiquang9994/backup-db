@@ -92,6 +92,22 @@ if (navLinks.length) {
   active?.classList.add("active");
 }
 
+// Logs page "Chỉ hiện lỗi" button — pure client-side row filter, the page
+// already has every row loaded so there's no need for a server round-trip.
+const logsFilterBtn = document.getElementById("logs-filter-error");
+if (logsFilterBtn) {
+  const rows = document.querySelectorAll("table tbody tr[data-status]");
+  let errorsOnly = false;
+  logsFilterBtn.addEventListener("click", () => {
+    errorsOnly = !errorsOnly;
+    rows.forEach((row) => {
+      row.style.display = errorsOnly && row.dataset.status === "success" ? "none" : "";
+    });
+    logsFilterBtn.classList.toggle("primary", errorsOnly);
+    setLabel(logsFilterBtn, errorsOnly ? "Hiện tất cả" : "Chỉ hiện lỗi");
+  });
+}
+
 // Auth DB only applies to mongo — the form ships it pre-hidden/shown for the
 // current driver (server-rendered, avoids a flash of the wrong state), this
 // just keeps it in sync as the user changes the driver dropdown.

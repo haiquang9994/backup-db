@@ -37,3 +37,23 @@
 {{define "icon-download"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}
 
 {{define "icon-signal"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>{{end}}
+
+{{define "icon-filter"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>{{end}}
+
+{{define "icon-chevron-left"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>{{end}}
+
+{{define "icon-chevron-right"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>{{end}}
+
+{{/* Reusable pager: pass a .Pagination (internal/admin.Pagination) as dot.
+     Renders nothing when everything fits on one page. Prev/Next link to
+     .BaseURL+"?page=N"; any page-scoped filters a future caller adds to
+     BaseURL just need to be included there, e.g. "/logs?status=error". */}}
+{{define "pagination"}}
+{{if gt .TotalPages 1}}
+<nav class="pagination">
+  {{if .HasPrev}}<a class="button" href="{{.BaseURL}}?page={{.PrevPage}}">{{template "icon-chevron-left"}} Trước</a>{{else}}<span class="button" disabled>{{template "icon-chevron-left"}} Trước</span>{{end}}
+  <span class="pagination-info">Trang {{.Page}}/{{.TotalPages}} — {{.Total}} dòng</span>
+  {{if .HasNext}}<a class="button" href="{{.BaseURL}}?page={{.NextPage}}">Sau {{template "icon-chevron-right"}}</a>{{else}}<span class="button" disabled>Sau {{template "icon-chevron-right"}}</span>{{end}}
+</nav>
+{{end}}
+{{end}}

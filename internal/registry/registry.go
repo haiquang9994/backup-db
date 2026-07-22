@@ -904,13 +904,12 @@ func (r *Registry) CreateBackupRun(ctx context.Context, run BackupRun) (int64, e
 	return res.LastInsertId()
 }
 
-// ListBackupRuns returns the most recent runs, newest first, capped at
-// limit — the log is meant for "what happened recently", not a full audit
-// trail with pagination.
-func (r *Registry) ListBackupRuns(ctx context.Context, limit int) ([]BackupRun, error) {
+// ListBackupRuns returns one page of runs, newest first — backs the admin
+// UI's "Nhật ký" page.
+func (r *Registry) ListBackupRuns(ctx context.Context, limit, offset int) ([]BackupRun, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, database_id, dbname, driver, status, message, duration_ms, started_at, created_at FROM backup_runs ORDER BY id DESC LIMIT ?",
-		limit,
+		"SELECT id, database_id, dbname, driver, status, message, duration_ms, started_at, created_at FROM backup_runs ORDER BY id DESC LIMIT ? OFFSET ?",
+		limit, offset,
 	)
 	if err != nil {
 		return nil, err
@@ -926,6 +925,14 @@ func (r *Registry) ListBackupRuns(ctx context.Context, limit int) ([]BackupRun, 
 		out = append(out, run)
 	}
 	return out, rows.Err()
+}
+
+// CountBackupRuns returns the total number of rows in backup_runs, used to
+// compute the "Nhật ký" page's total page count.
+func (r *Registry) CountBackupRuns(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM backup_runs").Scan(&count)
+	return count, err
 }
 
 // DeleteAllBackupRuns clears the entire log — backs the admin UI's "Xóa

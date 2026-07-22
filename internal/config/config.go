@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -32,6 +33,9 @@ type Config struct {
 	AdminUsername string
 	AdminPassword string
 	AdminPort     string
+
+	// LogListLimit is the page size for the admin UI's "Nhật ký" page.
+	LogListLimit int
 
 	// Agent* configure the `backupdb agent` subcommand — a standalone HTTPS
 	// server for dump+upload on a database server this deployment can't
@@ -66,6 +70,7 @@ func Load() *Config {
 		AdminUsername: getEnv("ADMIN_USERNAME", ""),
 		AdminPassword: getEnv("ADMIN_PASSWORD", ""),
 		AdminPort:     getEnv("ADMIN_PORT", "8080"),
+		LogListLimit:  getEnvInt("LOG_LIST_LIMIT", 200),
 
 		AgentPort:     getEnv("AGENT_PORT", "8443"),
 		AgentToken:    getEnv("AGENT_TOKEN", ""),
@@ -81,4 +86,16 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
