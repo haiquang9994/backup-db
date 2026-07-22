@@ -1,0 +1,36 @@
+{{/* Shared "list of HH:MM triggers + add/delete" card, used by both a
+single database's own schedules (form.html) and a shared schedule's group
+times (shared_schedule_form.html) — same shape either way: a list of
+{ID, TimeOfDay, LastRunDate} rows. Expects a scheduleTimesCard value (see
+internal/admin/server.go): Title, Hint, Times, EmptyMsg, AddAction,
+DeletePrefix. */}}
+{{define "schedule-times-card"}}
+<div class="card">
+<h2>{{.Title}}</h2>
+<p class="hint">{{.Hint}}</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Giờ</th><th>Chạy gần nhất</th><th></th></tr></thead>
+<tbody>
+{{range .Times}}
+<tr>
+  <td>{{template "icon-clock"}} {{.TimeOfDay}}</td>
+  <td>{{if .LastRunDate}}{{.LastRunDate}}{{else}}<span class="hint">chưa chạy</span>{{end}}</td>
+  <td>
+    <button type="button" class="danger" data-action="{{$.DeletePrefix}}{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá khung giờ {{.TimeOfDay}}?">{{template "icon-trash"}} Xoá</button>
+  </td>
+</tr>
+{{else}}
+<tr><td class="empty-state" colspan="3">{{.EmptyMsg}}</td></tr>
+{{end}}
+</tbody>
+</table>
+</div>
+<form method="post" action="{{.AddAction}}" class="form form-inline">
+  <label>Thêm giờ backup
+    <input type="time" name="time_of_day" required>
+  </label>
+  <button type="submit">{{template "icon-plus"}} Thêm</button>
+</form>
+</div>
+{{end}}

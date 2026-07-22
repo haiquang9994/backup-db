@@ -36,15 +36,17 @@ type Server struct {
 	username              string
 	password              string
 	googleCredentialsFile string
+	schedulerTimezone     string
 }
 
-func NewServer(reg *registry.Registry, q *queue.Client, username, password, googleCredentialsFile string) *Server {
+func NewServer(reg *registry.Registry, q *queue.Client, username, password, googleCredentialsFile, schedulerTimezone string) *Server {
 	return &Server{
 		reg:                   reg,
 		q:                     q,
 		username:              username,
 		password:              password,
 		googleCredentialsFile: googleCredentialsFile,
+		schedulerTimezone:     schedulerTimezone,
 	}
 }
 
@@ -110,8 +112,23 @@ type formData struct {
 	Action         string
 	Editing        bool
 	Database       registry.Database
-	Schedules      []registry.Schedule
 	StorageTargets []registry.StorageTarget
+	Timezone       string
+	TimesCard      scheduleTimesCard
+}
+
+// scheduleTimesCard is the data schedule_times.html's shared
+// "schedule-times-card" block renders — the same UI for a single database's
+// own schedules (form.html) and for a shared schedule's group times
+// (shared_schedule_form.html), since both are just a list of
+// {ID, TimeOfDay, LastRunDate} rows with an add/delete flow.
+type scheduleTimesCard struct {
+	Title        string
+	Hint         string
+	Times        any
+	EmptyMsg     string
+	AddAction    string
+	DeletePrefix string
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +148,7 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := formData{Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets}
+	data := formData{Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets, Timezone: s.schedulerTimezone}
 	if err := tmpl.ExecuteTemplate(w, "form.html", data); err != nil {
 		log.Println("render form:", err)
 	}
@@ -175,7 +192,17 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := formData{Action: "/edit/" + r.PathValue("id"), Database: *d, Editing: true, Schedules: schedules, StorageTargets: targets}
+	data := formData{
+		Action: "/edit/" + r.PathValue("id"), Database: *d, Editing: true, StorageTargets: targets, Timezone: s.schedulerTimezone,
+		TimesCard: scheduleTimesCard{
+			Title:        fmt.Sprintf("Lịch backup tự động (giờ %s)", s.schedulerTimezone),
+			Hint:         "Có thể thêm nhiều giờ trong ngày — mỗi giờ sẽ tự đẩy 1 job backup riêng cho database này.",
+			Times:        schedules,
+			EmptyMsg:     "Chưa có lịch nào — database sẽ không tự động backup.",
+			AddAction:    fmt.Sprintf("/databases/%d/schedules", id),
+			DeletePrefix: "/schedules/",
+		},
+	}
 	if err := tmpl.ExecuteTemplate(w, "form.html", data); err != nil {
 		log.Println("render form:", err)
 	}
@@ -241,9 +268,10 @@ func (s *Server) handleSharedScheduleList(w http.ResponseWriter, r *http.Request
 type sharedScheduleFormData struct {
 	Editing   bool
 	Action    string
-	Schedule  registry.SharedSchedule
 	Databases []registry.Database // every database, to render as checkboxes
 	Selected  map[int64]bool      // which of Databases are currently members
+	Timezone  string
+	TimesCard scheduleTimesCard
 	Error     string
 }
 
@@ -256,15 +284,32 @@ func (s *Server) renderSharedScheduleForm(w http.ResponseWriter, data sharedSche
 // renderSharedScheduleError re-fetches the database list (needed to render
 // the checkbox group again) and re-renders the form with an error, keeping
 // whatever the user had checked.
-func (s *Server) renderSharedScheduleError(w http.ResponseWriter, r *http.Request, editing bool, action string, sched registry.SharedSchedule, databaseIDs []int64, errMsg string) {
+func (s *Server) renderSharedScheduleError(w http.ResponseWriter, r *http.Request, editing bool, action string, id int64, times []registry.SharedScheduleTime, databaseIDs []int64, errMsg string) {
 	dbs, err := s.reg.List(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderSharedScheduleForm(w, sharedScheduleFormData{
-		Editing: editing, Action: action, Schedule: sched, Databases: dbs, Selected: selectedSet(databaseIDs), Error: errMsg,
-	})
+	data := sharedScheduleFormData{
+		Editing: editing, Action: action, Databases: dbs, Selected: selectedSet(databaseIDs), Timezone: s.schedulerTimezone, Error: errMsg,
+	}
+	if editing {
+		data.TimesCard = s.sharedScheduleTimesCard(id, times)
+	}
+	s.renderSharedScheduleForm(w, data)
+}
+
+// sharedScheduleTimesCard builds the shared "schedule-times-card" data for a
+// shared schedule's Times, used by both the edit page and its error re-render.
+func (s *Server) sharedScheduleTimesCard(id int64, times []registry.SharedScheduleTime) scheduleTimesCard {
+	return scheduleTimesCard{
+		Title:        fmt.Sprintf("Khung giờ backup (giờ %s)", s.schedulerTimezone),
+		Hint:         "Có thể thêm nhiều khung giờ trong ngày — mỗi giờ tự đẩy 1 job backup riêng cho tất cả database trong nhóm này.",
+		Times:        times,
+		EmptyMsg:     "Chưa có khung giờ nào — lịch chung sẽ không tự động chạy.",
+		AddAction:    fmt.Sprintf("/shared-schedules/%d/times", id),
+		DeletePrefix: "/shared-schedule-times/",
+	}
 }
 
 func selectedSet(ids []int64) map[int64]bool {
@@ -281,7 +326,7 @@ func (s *Server) handleSharedScheduleNewForm(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderSharedScheduleForm(w, sharedScheduleFormData{Action: "/shared-schedules", Databases: dbs, Selected: map[int64]bool{}})
+	s.renderSharedScheduleForm(w, sharedScheduleFormData{Action: "/shared-schedules", Databases: dbs, Selected: map[int64]bool{}, Timezone: s.schedulerTimezone})
 }
 
 func (s *Server) handleSharedScheduleEditForm(w http.ResponseWriter, r *http.Request) {
@@ -311,9 +356,10 @@ func (s *Server) handleSharedScheduleEditForm(w http.ResponseWriter, r *http.Req
 	s.renderSharedScheduleForm(w, sharedScheduleFormData{
 		Editing:   true,
 		Action:    fmt.Sprintf("/shared-schedules/%d", id),
-		Schedule:  *sched,
 		Databases: dbs,
 		Selected:  selected,
+		Timezone:  s.schedulerTimezone,
+		TimesCard: s.sharedScheduleTimesCard(id, sched.Times),
 	})
 }
 
@@ -340,12 +386,12 @@ func (s *Server) handleSharedScheduleCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if len(databaseIDs) == 0 {
-		s.renderSharedScheduleError(w, r, false, "/shared-schedules", registry.SharedSchedule{}, databaseIDs, "Chọn ít nhất 1 database")
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", 0, nil, databaseIDs, "Chọn ít nhất 1 database")
 		return
 	}
 	id, err := s.reg.CreateSharedSchedule(r.Context(), databaseIDs)
 	if err != nil {
-		s.renderSharedScheduleError(w, r, false, "/shared-schedules", registry.SharedSchedule{}, databaseIDs, err.Error())
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", 0, nil, databaseIDs, err.Error())
 		return
 	}
 	// Straight to the edit page — that's where khung giờ backup get added,
@@ -377,13 +423,11 @@ func (s *Server) handleSharedScheduleUpdate(w http.ResponseWriter, r *http.Reque
 	action := fmt.Sprintf("/shared-schedules/%d", id)
 
 	if len(databaseIDs) == 0 {
-		sched := *existing
-		s.renderSharedScheduleError(w, r, true, action, sched, databaseIDs, "Chọn ít nhất 1 database")
+		s.renderSharedScheduleError(w, r, true, action, id, existing.Times, databaseIDs, "Chọn ít nhất 1 database")
 		return
 	}
 	if err := s.reg.UpdateSharedSchedule(r.Context(), id, databaseIDs); err != nil {
-		sched := *existing
-		s.renderSharedScheduleError(w, r, true, action, sched, databaseIDs, err.Error())
+		s.renderSharedScheduleError(w, r, true, action, id, existing.Times, databaseIDs, err.Error())
 		return
 	}
 	http.Redirect(w, r, "/shared-schedules", http.StatusSeeOther)

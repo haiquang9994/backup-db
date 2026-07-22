@@ -15,8 +15,6 @@ import (
 	"backupdb/internal/registry"
 )
 
-const schedulerTimezone = "Asia/Ho_Chi_Minh"
-
 // runScheduler replaces the old crontab-driven dispatch: it polls the
 // registry's `schedules` table (managed from the admin UI, any number of
 // times per day per database) and enqueues a job whenever a schedule's
@@ -24,9 +22,9 @@ const schedulerTimezone = "Asia/Ho_Chi_Minh"
 func runScheduler(args []string) error {
 	cfg := config.Load()
 
-	loc, err := time.LoadLocation(schedulerTimezone)
+	loc, err := time.LoadLocation(cfg.SchedulerTimezone)
 	if err != nil {
-		return fmt.Errorf("load timezone %s: %w", schedulerTimezone, err)
+		return fmt.Errorf("load timezone %s: %w", cfg.SchedulerTimezone, err)
 	}
 
 	reg, err := registry.Open(cfg.SQLitePath)
@@ -41,7 +39,7 @@ func runScheduler(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	fmt.Printf("Scheduler started (timezone %s), checking every 30s...\n", schedulerTimezone)
+	fmt.Printf("Scheduler started (timezone %s), checking every 30s...\n", cfg.SchedulerTimezone)
 
 	checkAndEnqueue(ctx, reg, q, loc)
 

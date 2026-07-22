@@ -31,6 +31,14 @@ type Config struct {
 
 	SQLitePath string
 
+	// SchedulerTimezone is the IANA zone schedules and shared schedule times
+	// are interpreted in — both by the scheduler when deciding what's due,
+	// and in the admin UI's "(giờ ...)" labels. One value for the whole
+	// deployment, not per admin/browser: schedules are stored as plain
+	// "HH:MM" with no timezone of their own, so everyone reading/editing
+	// them needs to agree on what zone that means.
+	SchedulerTimezone string
+
 	AdminUsername string
 	AdminPassword string
 	AdminPort     string
@@ -64,6 +72,8 @@ func Load() *Config {
 		GoogleCredentialsFile: getEnv("GOOGLE_CREDENTIALS_FILE", "./google/credentials.json"),
 
 		SQLitePath: getEnv("SQLITE_PATH", "./data/backupdb.sqlite3"),
+
+		SchedulerTimezone: getEnv("SCHEDULER_TIMEZONE", "Asia/Ho_Chi_Minh"),
 
 		AdminUsername: getEnv("ADMIN_USERNAME", ""),
 		AdminPassword: getEnv("ADMIN_PASSWORD", ""),
