@@ -109,10 +109,11 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 	}
 
 	// Channels are assigned per database (registry), not carried on the
-	// job, so resolve job.DBName back to its current row. A database
-	// deleted between enqueue and completion just means no notification —
-	// same as it already did for storage.
-	d, err := reg.GetByName(ctx, job.DBName)
+	// job, so resolve the job back to its current row — by name+agent+driver
+	// together, not name alone, since name isn't guaranteed unique on its
+	// own (see schema.go). A database deleted between enqueue and completion
+	// just means no notification — same as it already did for storage.
+	d, err := reg.GetByNameAgentDriver(ctx, job.DBName, job.AgentID, job.Driver)
 	if err != nil {
 		logErr("notify: look up %s: %v", job.DBName, err)
 	}

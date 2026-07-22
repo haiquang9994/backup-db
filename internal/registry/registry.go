@@ -72,6 +72,17 @@ func Open(path string) (*Registry, error) {
 	if err := migrateAgentIDColumn(db); err != nil {
 		return nil, fmt.Errorf("migrate agent_id column: %w", err)
 	}
+	if err := migrateDatabasesNameUniqueScope(db); err != nil {
+		return nil, fmt.Errorf("migrate databases name unique scope: %w", err)
+	}
+	// Created here rather than in the schema string: an install upgrading
+	// from before agent_id existed wouldn't have that column yet at the
+	// point the schema string runs, only after migrateAgentIDColumn above.
+	// IF NOT EXISTS makes this a no-op once created (fresh installs and
+	// already-migrated ones both hit this every Open()).
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_databases_name_agent_driver ON databases(name, agent_id, driver)"); err != nil {
+		return nil, fmt.Errorf("create databases name/agent/driver index: %w", err)
+	}
 
 	return &Registry{db: db}, nil
 }
@@ -178,6 +189,140 @@ func migrateAgentIDColumn(db *sql.DB) error {
 	return err
 }
 
+// migrateDatabasesNameUniqueScope drops the old single-column UNIQUE(name)
+// constraint for installs that predate agent_id/driver being part of a
+// database's identity (see schema.go's comment on the databases table).
+// SQLite has no ALTER TABLE to drop a column-level constraint, so this
+// rebuilds the table — the standard SQLite recipe for schema changes ALTER
+// TABLE can't express (temporarily disable FK enforcement, recreate + copy +
+// swap inside a transaction, then re-verify FKs before turning it back on).
+// Preserves every row's id unchanged, so schedules/shared_schedule_databases
+// (which reference databases(id)) need no changes of their own.
+func migrateDatabasesNameUniqueScope(db *sql.DB) error {
+	old, err := hasSingleColumnUniqueIndex(db, "databases", "name")
+	if err != nil {
+		return err
+	}
+	if !old {
+		return nil
+	}
+
+	if _, err := db.Exec("PRAGMA foreign_keys=OFF"); err != nil {
+		return err
+	}
+	defer db.Exec("PRAGMA foreign_keys=ON")
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		CREATE TABLE databases_new (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			name              TEXT NOT NULL,
+			driver            TEXT NOT NULL,
+			host              TEXT NOT NULL,
+			port              TEXT NOT NULL DEFAULT '',
+			username          TEXT NOT NULL DEFAULT '',
+			password          TEXT NOT NULL DEFAULT '',
+			auth_db           TEXT NOT NULL DEFAULT '',
+			storage_target_id INTEGER NOT NULL DEFAULT 0,
+			agent_id          INTEGER NOT NULL DEFAULT 0,
+			enabled           INTEGER NOT NULL DEFAULT 1,
+			created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		return fmt.Errorf("create databases_new: %w", err)
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO databases_new (id, name, driver, host, port, username, password, auth_db, storage_target_id, agent_id, enabled, created_at, updated_at)
+		SELECT id, name, driver, host, port, username, password, auth_db, storage_target_id, agent_id, enabled, created_at, updated_at FROM databases
+	`); err != nil {
+		return fmt.Errorf("copy databases rows: %w", err)
+	}
+	if _, err := tx.Exec("DROP TABLE databases"); err != nil {
+		return fmt.Errorf("drop old databases table: %w", err)
+	}
+	if _, err := tx.Exec("ALTER TABLE databases_new RENAME TO databases"); err != nil {
+		return fmt.Errorf("rename databases_new: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	rows, err := db.Query("PRAGMA foreign_key_check")
+	if err != nil {
+		return fmt.Errorf("foreign_key_check: %w", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return fmt.Errorf("foreign_key_check found violations after databases table rebuild")
+	}
+	return rows.Err()
+}
+
+// hasSingleColumnUniqueIndex reports whether table has a UNIQUE index
+// (constraint-backed or explicit) whose only indexed column is column —
+// used to detect the old inline UNIQUE(name) constraint specifically,
+// distinct from the new composite (name, agent_id, driver) index that
+// replaces it.
+func hasSingleColumnUniqueIndex(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query("PRAGMA index_list(" + table + ")")
+	if err != nil {
+		return false, fmt.Errorf("list %s indexes: %w", table, err)
+	}
+	var uniqueIndexes []string
+	for rows.Next() {
+		var seq int
+		var name, origin string
+		var unique, partial int
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			rows.Close()
+			return false, err
+		}
+		if unique == 1 {
+			uniqueIndexes = append(uniqueIndexes, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, err
+	}
+	rows.Close()
+
+	for _, idxName := range uniqueIndexes {
+		cols, err := indexColumns(db, idxName)
+		if err != nil {
+			return false, err
+		}
+		if len(cols) == 1 && cols[0] == column {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func indexColumns(db *sql.DB, indexName string) ([]string, error) {
+	rows, err := db.Query("PRAGMA index_info(" + indexName + ")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cols []string
+	for rows.Next() {
+		var seqno, cid int
+		var name string
+		if err := rows.Scan(&seqno, &cid, &name); err != nil {
+			return nil, err
+		}
+		cols = append(cols, name)
+	}
+	return cols, rows.Err()
+}
+
 func (r *Registry) Close() error {
 	return r.db.Close()
 }
@@ -242,6 +387,25 @@ func (r *Registry) Get(ctx context.Context, id int64) (*Database, error) {
 
 func (r *Registry) GetByName(ctx context.Context, name string) (*Database, error) {
 	row := r.db.QueryRowContext(ctx, "SELECT "+columns+" FROM databases WHERE name = ?", name)
+	d, err := scanDatabase(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// GetByNameAgentDriver resolves a finished queue.Job back to its registry
+// row. name alone isn't guaranteed unique (the same name may exist on a
+// different agent, or under a different driver on the same agent — see
+// schema.go's comment on the databases table) but the triple of
+// name+agent_id+driver is, and a Job carries all three, so this is what the
+// consumer uses instead of GetByName to avoid resolving to the wrong
+// database when names collide.
+func (r *Registry) GetByNameAgentDriver(ctx context.Context, name string, agentID int64, driver string) (*Database, error) {
+	row := r.db.QueryRowContext(ctx, "SELECT "+columns+" FROM databases WHERE name = ? AND agent_id = ? AND driver = ?", name, agentID, driver)
 	d, err := scanDatabase(row)
 	if err == sql.ErrNoRows {
 		return nil, nil

@@ -17,7 +17,14 @@ CREATE TABLE IF NOT EXISTS storage_targets (
 
 CREATE TABLE IF NOT EXISTS databases (
 	id                INTEGER PRIMARY KEY AUTOINCREMENT,
-	name              TEXT NOT NULL UNIQUE,
+	-- Not UNIQUE on its own: the same name legitimately shows up twice, e.g.
+	-- "shop" on two different agents, or a mysql "shop" and a mongo "shop"
+	-- on the same agent. What must stay unique is the (name, agent_id,
+	-- driver) triple — see idx_databases_name_agent_driver below, and
+	-- queue.Job/Registry.GetByNameAgentDriver which resolve a job back to
+	-- its row using exactly these three fields (a job only ever carries
+	-- name, not the database's numeric id).
+	name              TEXT NOT NULL,
 	driver            TEXT NOT NULL,
 	host              TEXT NOT NULL,
 	port              TEXT NOT NULL DEFAULT '',
@@ -40,6 +47,12 @@ CREATE TABLE IF NOT EXISTS databases (
 	created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- idx_databases_name_agent_driver (the UNIQUE(name, agent_id, driver)
+-- replacement for the old UNIQUE(name)) is created in Go, in Open(), after
+-- migrateAgentIDColumn — not here, since an install upgrading from before
+-- agent_id existed wouldn't have that column yet at the point this schema
+-- string runs.
 
 CREATE TABLE IF NOT EXISTS schedules (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
