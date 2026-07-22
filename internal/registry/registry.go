@@ -375,7 +375,7 @@ func (r *Registry) ListDueSchedules(ctx context.Context, now time.Time) ([]DueJo
 	today := now.Format("2006-01-02")
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT s.id, d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.enabled, d.created_at, d.updated_at
+		SELECT s.id, d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.agent_id, d.enabled, d.created_at, d.updated_at
 		FROM schedules s
 		JOIN databases d ON d.id = s.database_id
 		WHERE s.enabled = 1 AND d.enabled = 1 AND s.time_of_day = ? AND s.last_run_date != ?
@@ -390,7 +390,7 @@ func (r *Registry) ListDueSchedules(ctx context.Context, now time.Time) ([]DueJo
 		var scheduleID int64
 		var d Database
 		var enabled int
-		if err := rows.Scan(&scheduleID, &d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &enabled, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&scheduleID, &d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &d.AgentID, &enabled, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		d.Enabled = enabled != 0
@@ -550,7 +550,7 @@ func (r *Registry) DeleteSharedScheduleTime(ctx context.Context, id int64) error
 // currently applies to.
 func (r *Registry) ListDatabasesForSharedSchedule(ctx context.Context, sharedScheduleID int64) ([]Database, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.enabled, d.created_at, d.updated_at
+		SELECT d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.agent_id, d.enabled, d.created_at, d.updated_at
 		FROM databases d
 		JOIN shared_schedule_databases ssd ON ssd.database_id = d.id
 		WHERE ssd.shared_schedule_id = ?
@@ -626,7 +626,7 @@ func (r *Registry) ListDueSharedSchedules(ctx context.Context, now time.Time) ([
 	today := now.Format("2006-01-02")
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT sst.id, d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.enabled, d.created_at, d.updated_at
+		SELECT sst.id, d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.agent_id, d.enabled, d.created_at, d.updated_at
 		FROM shared_schedule_times sst
 		JOIN shared_schedules ss ON ss.id = sst.shared_schedule_id
 		JOIN shared_schedule_databases ssd ON ssd.shared_schedule_id = ss.id
@@ -643,7 +643,7 @@ func (r *Registry) ListDueSharedSchedules(ctx context.Context, now time.Time) ([
 		var scheduleTimeID int64
 		var d Database
 		var enabled int
-		if err := rows.Scan(&scheduleTimeID, &d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &enabled, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&scheduleTimeID, &d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &d.AgentID, &enabled, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		d.Enabled = enabled != 0
