@@ -55,6 +55,19 @@
       </select>
     </label>
     {{if not .StorageTargets}}<p class="hint">Chưa có nơi lưu trữ nào — vào trang <a href="/storage">Nơi lưu trữ</a> để kết nối Google Drive hoặc S3.</p>{{end}}
+    <label>Kênh thông báo
+      <div class="checkbox-group">
+        {{$selectedChannels := .SelectedChannels}}
+        {{range .NotifyChannels}}
+        <label class="checkbox">
+          <input type="checkbox" name="notify_channel_ids" value="{{.ID}}" {{if index $selectedChannels .ID}}checked{{end}}>
+          {{.Label}} <span class="tag">{{.Kind}}</span>
+        </label>
+        {{else}}
+        <p class="hint">Chưa có kênh thông báo nào — vào trang <a href="/notify">Thông báo</a> để thêm.</p>
+        {{end}}
+      </div>
+    </label>
     <label class="checkbox">
       <input type="checkbox" name="enabled" {{if .Database.Enabled}}checked{{end}}>
       Bật backup tự động theo lịch

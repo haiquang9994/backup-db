@@ -86,6 +86,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /storage/s3/{id}/edit", s.handleStorageS3EditForm)
 	mux.HandleFunc("POST /storage/s3/{id}", s.handleStorageUpdateS3)
 	mux.HandleFunc("POST /storage/s3/{id}/delete", s.handleStorageDelete)
+	mux.HandleFunc("GET /notify", s.handleNotifyList)
+	mux.HandleFunc("GET /notify/telegram/new", s.handleNotifyTelegramNewForm)
+	mux.HandleFunc("POST /notify/telegram", s.handleNotifyAddTelegram)
+	mux.HandleFunc("GET /notify/telegram/{id}/edit", s.handleNotifyTelegramEditForm)
+	mux.HandleFunc("POST /notify/telegram/{id}", s.handleNotifyUpdateTelegram)
+	mux.HandleFunc("POST /notify-channels/{id}/delete", s.handleNotifyDelete)
 
 	return s.basicAuth(mux)
 }
@@ -109,12 +115,14 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 }
 
 type formData struct {
-	Action         string
-	Editing        bool
-	Database       registry.Database
-	StorageTargets []registry.StorageTarget
-	Timezone       string
-	TimesCard      scheduleTimesCard
+	Action           string
+	Editing          bool
+	Database         registry.Database
+	StorageTargets   []registry.StorageTarget
+	NotifyChannels   []registry.NotifyChannel // every channel, to render as checkboxes
+	SelectedChannels map[int64]bool           // which of NotifyChannels are currently assigned
+	Timezone         string
+	TimesCard        scheduleTimesCard
 }
 
 // scheduleTimesCard is the data schedule_times.html's shared
@@ -148,19 +156,32 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := formData{Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets, Timezone: s.schedulerTimezone}
+	channels, err := s.reg.ListNotifyChannels(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data := formData{
+		Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets,
+		NotifyChannels: channels, SelectedChannels: map[int64]bool{}, Timezone: s.schedulerTimezone,
+	}
 	if err := tmpl.ExecuteTemplate(w, "form.html", data); err != nil {
 		log.Println("render form:", err)
 	}
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	d, err := parseForm(r)
+	d, notifyChannelIDs, err := parseForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, err := s.reg.Create(r.Context(), d); err != nil {
+	id, err := s.reg.Create(r.Context(), d)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.reg.SetDatabaseNotifyChannels(r.Context(), id, notifyChannelIDs); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -192,8 +213,23 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	channels, err := s.reg.ListNotifyChannels(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	assigned, err := s.reg.ListNotifyChannelsForDatabase(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	selectedChannels := make(map[int64]bool, len(assigned))
+	for _, c := range assigned {
+		selectedChannels[c.ID] = true
+	}
 	data := formData{
 		Action: "/edit/" + r.PathValue("id"), Database: *d, Editing: true, StorageTargets: targets, Timezone: s.schedulerTimezone,
+		NotifyChannels: channels, SelectedChannels: selectedChannels,
 		TimesCard: scheduleTimesCard{
 			Title:        fmt.Sprintf("Lịch backup tự động (giờ %s)", s.schedulerTimezone),
 			Hint:         "Có thể thêm nhiều giờ trong ngày — mỗi giờ sẽ tự đẩy 1 job backup riêng cho database này.",
@@ -518,13 +554,17 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	d, err := parseForm(r)
+	d, notifyChannelIDs, err := parseForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	d.ID = id
 	if err := s.reg.Update(r.Context(), d); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.reg.SetDatabaseNotifyChannels(r.Context(), id, notifyChannelIDs); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -929,12 +969,182 @@ func (s *Server) handleStorageDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/storage", http.StatusSeeOther)
 }
 
-func parseForm(r *http.Request) (registry.Database, error) {
+func (s *Server) handleNotifyList(w http.ResponseWriter, r *http.Request) {
+	channels, err := s.reg.ListNotifyChannels(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := tmpl.ExecuteTemplate(w, "notify_channels.html", struct {
+		Channels []registry.NotifyChannel
+	}{channels}); err != nil {
+		log.Println("render notify channels:", err)
+	}
+}
+
+// telegramConfig is the JSON shape stored in notify_channels.config for
+// kind="telegram" — mirrors internal/notify's own copy of this shape
+// (same convention as s3Config here vs s3store.Config).
+type telegramConfig struct {
+	BotToken string `json:"bot_token"`
+	ChatID   string `json:"chat_id"`
+}
+
+// telegramFormData backs notify_telegram.html, used for both the "add new"
+// and "edit existing" pages.
+type telegramFormData struct {
+	Editing bool
+	Action  string
+	Channel registry.NotifyChannel
+	Config  telegramConfig
+	Error   string
+}
+
+func (s *Server) renderTelegramForm(w http.ResponseWriter, data telegramFormData) {
+	if err := tmpl.ExecuteTemplate(w, "notify_telegram.html", data); err != nil {
+		log.Println("render notify telegram form:", err)
+	}
+}
+
+func (s *Server) handleNotifyTelegramNewForm(w http.ResponseWriter, r *http.Request) {
+	s.renderTelegramForm(w, telegramFormData{Action: "/notify/telegram"})
+}
+
+func (s *Server) handleNotifyTelegramEditForm(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	channel, err := s.reg.GetNotifyChannel(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if channel == nil || channel.Kind != "telegram" {
+		http.NotFound(w, r)
+		return
+	}
+	var cfg telegramConfig
+	if err := json.Unmarshal([]byte(channel.Config), &cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderTelegramForm(w, telegramFormData{
+		Editing: true, Action: fmt.Sprintf("/notify/telegram/%d", id), Channel: *channel, Config: cfg,
+	})
+}
+
+// parseTelegramForm reads the label and bot token/chat id shared by the add
+// and edit forms.
+func parseTelegramForm(r *http.Request) (label string, cfg telegramConfig, err error) {
+	if err = r.ParseForm(); err != nil {
+		return
+	}
+	label = strings.TrimSpace(r.FormValue("label"))
+	cfg = telegramConfig{
+		BotToken: strings.TrimSpace(r.FormValue("bot_token")),
+		ChatID:   strings.TrimSpace(r.FormValue("chat_id")),
+	}
+	return
+}
+
+func (s *Server) handleNotifyAddTelegram(w http.ResponseWriter, r *http.Request) {
+	label, cfg, err := parseTelegramForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data := telegramFormData{Action: "/notify/telegram", Config: cfg, Channel: registry.NotifyChannel{Label: label}}
+	if label == "" || cfg.BotToken == "" || cfg.ChatID == "" {
+		data.Error = "Vui lòng nhập đủ tên gợi nhớ, bot token và chat id"
+		s.renderTelegramForm(w, data)
+		return
+	}
+	cfgJSON, err := json.Marshal(cfg)
+	if err != nil {
+		data.Error = err.Error()
+		s.renderTelegramForm(w, data)
+		return
+	}
+	if _, err := s.reg.CreateNotifyChannel(r.Context(), "telegram", label, string(cfgJSON)); err != nil {
+		data.Error = err.Error()
+		s.renderTelegramForm(w, data)
+		return
+	}
+	http.Redirect(w, r, "/notify", http.StatusSeeOther)
+}
+
+func (s *Server) handleNotifyUpdateTelegram(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	channel, err := s.reg.GetNotifyChannel(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if channel == nil || channel.Kind != "telegram" {
+		http.NotFound(w, r)
+		return
+	}
+
+	label, cfg, err := parseTelegramForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	action := fmt.Sprintf("/notify/telegram/%d", id)
+	data := telegramFormData{Editing: true, Action: action, Channel: *channel, Config: cfg}
+	if label == "" || cfg.BotToken == "" || cfg.ChatID == "" {
+		data.Error = "Vui lòng nhập đủ tên gợi nhớ, bot token và chat id"
+		s.renderTelegramForm(w, data)
+		return
+	}
+	data.Channel.Label = label
+	cfgJSON, err := json.Marshal(cfg)
+	if err != nil {
+		data.Error = err.Error()
+		s.renderTelegramForm(w, data)
+		return
+	}
+	if err := s.reg.UpdateNotifyChannel(r.Context(), id, label, string(cfgJSON)); err != nil {
+		data.Error = err.Error()
+		s.renderTelegramForm(w, data)
+		return
+	}
+	http.Redirect(w, r, "/notify", http.StatusSeeOther)
+}
+
+func (s *Server) handleNotifyDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := s.reg.DeleteNotifyChannel(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/notify", http.StatusSeeOther)
+}
+
+func parseForm(r *http.Request) (registry.Database, []int64, error) {
 	if err := r.ParseForm(); err != nil {
-		return registry.Database{}, err
+		return registry.Database{}, nil, err
 	}
 	storageTargetID, _ := strconv.ParseInt(r.FormValue("storage_target_id"), 10, 64)
-	return registry.Database{
+	var notifyChannelIDs []int64
+	for _, v := range r.Form["notify_channel_ids"] {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			continue
+		}
+		notifyChannelIDs = append(notifyChannelIDs, id)
+	}
+	d := registry.Database{
 		Name:            r.FormValue("name"),
 		Driver:          r.FormValue("driver"),
 		Host:            r.FormValue("host"),
@@ -944,5 +1154,6 @@ func parseForm(r *http.Request) (registry.Database, error) {
 		AuthDB:          r.FormValue("auth_db"),
 		StorageTargetID: storageTargetID,
 		Enabled:         r.FormValue("enabled") == "on",
-	}, nil
+	}
+	return d, notifyChannelIDs, nil
 }

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backupdb — {{if .Editing}}Sửa{{else}}Thêm{{end}} kênh Telegram</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>{{if .Editing}}Sửa kênh Telegram{{else}}Thêm kênh Telegram{{end}}</h1>
+      <p class="subtitle">{{if .Editing}}{{.Channel.Label}}{{else}}Gửi thẳng qua API của Telegram, cần tạo sẵn 1 bot (qua @BotFather) và biết chat id muốn gửi tới. Kênh này sẽ nhận cả báo lỗi lẫn báo thành công cho mọi database được gán.{{end}}</p>
+    </div>
+  </div>
+
+  <div class="card">
+  <form method="post" action="{{.Action}}" class="form">
+    <label>Tên gợi nhớ
+      <input type="text" name="label" value="{{.Channel.Label}}" required placeholder="VD: Telegram báo lỗi">
+    </label>
+    <label>Bot token
+      <input type="text" name="bot_token" value="{{.Config.BotToken}}" required placeholder="123456:ABC-DEF...">
+    </label>
+    <label>Chat ID
+      <input type="text" name="chat_id" value="{{.Config.ChatID}}" required placeholder="-100xxxxxxxxxx">
+    </label>
+
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+    <div class="form-actions">
+      <button type="submit">{{template "icon-plus"}} Lưu</button>
+      <a class="button" href="/notify">Huỷ</a>
+    </div>
+  </form>
+  </div>
+
+  <a class="back-link" href="/notify">{{template "icon-back"}} Quay lại Thông báo</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

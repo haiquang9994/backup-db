@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>backupdb — Thông báo</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Kênh thông báo</h1>
+      <p class="subtitle">Mỗi database chọn bất kỳ số kênh nào ở đây để nhận thông báo (cả báo lỗi lẫn báo thành công) — trang Sửa database.</p>
+    </div>
+    <div class="page-head-actions">
+      <a class="button primary" href="/notify/telegram/new">{{template "icon-plus"}} Thêm kênh Telegram</a>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+  <thead><tr><th>Loại</th><th>Tên</th><th></th></tr></thead>
+  <tbody>
+  {{range .Channels}}
+  <tr>
+    <td>
+      {{if eq .Kind "telegram"}}<span class="tag">Telegram</span>{{else}}{{.Kind}}{{end}}
+    </td>
+    <td>{{.Label}}</td>
+    <td class="actions">
+      {{if eq .Kind "telegram"}}
+      <a class="button" href="/notify/telegram/{{.ID}}/edit">{{template "icon-pencil"}} Sửa</a>
+      {{end}}
+      <button type="button" class="danger" data-action="/notify-channels/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá kênh {{.Label}}? Database đang dùng kênh này sẽ không nhận thông báo qua đây nữa.">{{template "icon-trash"}} Xoá</button>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td class="empty-state" colspan="3">Chưa có kênh thông báo nào.</td></tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
+
+  <a class="back-link" href="/">{{template "icon-back"}} Quay lại danh sách database</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

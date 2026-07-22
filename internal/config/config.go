@@ -13,11 +13,6 @@ type Config struct {
 
 	ProjectName string
 
-	TelegramBotToken    string
-	TelegramChatID      string
-	TelegramLogBotToken string
-	TelegramLogChatID   string
-
 	MongoHost     string
 	MongoPort     string
 	MongoUsername string
@@ -57,11 +52,6 @@ func Load() *Config {
 		RedisPort: getEnv("REDIS_PORT", "6379"),
 
 		ProjectName: getEnv("PROJECT_NAME", ""),
-
-		TelegramBotToken:    getEnv("TELEGRAM_BOT_TOKEN", ""),
-		TelegramChatID:      getEnv("TELEGRAM_CHAT_ID", ""),
-		TelegramLogBotToken: getEnv("TELEGRAM_LOG_BOT_TOKEN", ""),
-		TelegramLogChatID:   getEnv("TELEGRAM_LOG_CHAT_ID", ""),
 
 		MongoHost:     getEnv("MONGO_HOST", "127.0.0.1"),
 		MongoPort:     getEnv("MONGO_PORT", "27017"),

@@ -75,11 +75,27 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 		return
 	}
 
-	if err := backupAndUpload(ctx, cfg, reg, job); err != nil {
-		logErr("%s: FAILED: %v", job.DBName, err)
-		notify.AlertError(cfg, err)
+	jobErr := backupAndUpload(ctx, cfg, reg, job)
+	if jobErr != nil {
+		logErr("%s: FAILED: %v", job.DBName, jobErr)
+	}
+
+	// Channels are assigned per database (registry), not carried on the
+	// job, so resolve job.DBName back to its current row. A database
+	// deleted between enqueue and completion just means no notification —
+	// same as it already did for storage.
+	d, err := reg.GetByName(ctx, job.DBName)
+	if err != nil {
+		logErr("notify: look up %s: %v", job.DBName, err)
+		return
+	}
+	if d == nil {
+		return
+	}
+	if jobErr != nil {
+		notify.DispatchError(ctx, reg, d.ID, cfg.ProjectName, job.DBName, jobErr)
 	} else {
-		notify.PushLog(cfg, job.DBName, job.Driver)
+		notify.DispatchSuccess(ctx, reg, d.ID, cfg.ProjectName, job.DBName, job.Driver)
 	}
 }
 

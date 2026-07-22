@@ -65,41 +65,47 @@ func Open(path string) (*Registry, error) {
 	if err := migrateSharedScheduleTimes(db); err != nil {
 		return nil, fmt.Errorf("migrate shared schedule times: %w", err)
 	}
+	if err := migrateNotifyChannelEvents(db); err != nil {
+		return nil, fmt.Errorf("migrate notify channel events: %w", err)
+	}
 
 	return &Registry{db: db}, nil
 }
 
-// migrateSharedScheduleTimes is a one-time, idempotent migration for
-// installs that still have the old shared_schedules shape (one row = one
-// time_of_day). CREATE TABLE IF NOT EXISTS above never touches an existing
-// table, so on an old install shared_schedules still carries time_of_day
-// and last_run_date columns — their presence is the signal this hasn't run
-// yet. It copies each row's time into the new shared_schedule_times table,
-// then drops the now-redundant columns so ListSharedSchedules etc. (which
-// no longer select them) work against the old table shape too.
-func migrateSharedScheduleTimes(db *sql.DB) error {
-	rows, err := db.Query("PRAGMA table_info(shared_schedules)")
+// hasColumn checks sqlite_master via PRAGMA table_info — used to detect an
+// old table shape left over from before a schema change, since CREATE TABLE
+// IF NOT EXISTS never touches an already-existing table.
+func hasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
-		return fmt.Errorf("check shared_schedules columns: %w", err)
+		return false, fmt.Errorf("check %s columns: %w", table, err)
 	}
-	var hasTimeColumn bool
+	defer rows.Close()
 	for rows.Next() {
 		var cid, notNull, pk int
 		var name, ctype string
 		var dflt sql.NullString
 		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			rows.Close()
-			return err
+			return false, err
 		}
-		if name == "time_of_day" {
-			hasTimeColumn = true
+		if name == column {
+			return true, nil
 		}
 	}
-	if err := rows.Err(); err != nil {
+	return false, rows.Err()
+}
+
+// migrateSharedScheduleTimes is a one-time, idempotent migration for
+// installs that still have the old shared_schedules shape (one row = one
+// time_of_day). It copies each row's time into the new shared_schedule_times
+// table, then drops the now-redundant columns so ListSharedSchedules etc.
+// (which no longer select them) work against the old table shape too.
+func migrateSharedScheduleTimes(db *sql.DB) error {
+	has, err := hasColumn(db, "shared_schedules", "time_of_day")
+	if err != nil {
 		return err
 	}
-	rows.Close()
-	if !hasTimeColumn {
+	if !has {
 		return nil
 	}
 
@@ -120,6 +126,34 @@ func migrateSharedScheduleTimes(db *sql.DB) error {
 	}
 	if _, err := tx.Exec("ALTER TABLE shared_schedules DROP COLUMN last_run_date"); err != nil {
 		return fmt.Errorf("drop last_run_date: %w", err)
+	}
+	return tx.Commit()
+}
+
+// migrateNotifyChannelEvents is a one-time, idempotent migration dropping
+// notify_channels.notify_on_success/notify_on_error — an initial version of
+// the feature had per-channel event filtering, simplified away before it
+// ever had real data: every channel now gets every event unconditionally.
+func migrateNotifyChannelEvents(db *sql.DB) error {
+	has, err := hasColumn(db, "notify_channels", "notify_on_success")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("ALTER TABLE notify_channels DROP COLUMN notify_on_success"); err != nil {
+		return fmt.Errorf("drop notify_on_success: %w", err)
+	}
+	if _, err := tx.Exec("ALTER TABLE notify_channels DROP COLUMN notify_on_error"); err != nil {
+		return fmt.Errorf("drop notify_on_error: %w", err)
 	}
 	return tx.Commit()
 }
@@ -695,4 +729,128 @@ func (r *Registry) UpdateStorageTargetLabelConfig(ctx context.Context, id int64,
 func (r *Registry) DeleteStorageTarget(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM storage_targets WHERE id = ?", id)
 	return err
+}
+
+// NotifyChannel is one configured notification destination (a Telegram
+// bot/chat today) — same kind/label/config shape as StorageTarget.
+// NotifyOnSuccess/NotifyOnError let a channel be error-alerts-only,
+// success-log-only, or both; a database picks any number of channels via
+// database_notify_channels.
+type NotifyChannel struct {
+	ID        int64
+	Kind      string
+	Label     string
+	Config    string
+	CreatedAt string
+	UpdatedAt string
+}
+
+func scanNotifyChannel(row interface{ Scan(...any) error }) (NotifyChannel, error) {
+	var c NotifyChannel
+	err := row.Scan(&c.ID, &c.Kind, &c.Label, &c.Config, &c.CreatedAt, &c.UpdatedAt)
+	return c, err
+}
+
+const notifyChannelColumns = "id, kind, label, config, created_at, updated_at"
+
+func (r *Registry) ListNotifyChannels(ctx context.Context) ([]NotifyChannel, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT "+notifyChannelColumns+" FROM notify_channels ORDER BY kind, label",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []NotifyChannel
+	for rows.Next() {
+		c, err := scanNotifyChannel(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (r *Registry) GetNotifyChannel(ctx context.Context, id int64) (*NotifyChannel, error) {
+	row := r.db.QueryRowContext(ctx, "SELECT "+notifyChannelColumns+" FROM notify_channels WHERE id = ?", id)
+	c, err := scanNotifyChannel(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// ListNotifyChannelsForDatabase returns the channels a database currently
+// notifies through.
+func (r *Registry) ListNotifyChannelsForDatabase(ctx context.Context, databaseID int64) ([]NotifyChannel, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT nc.id, nc.kind, nc.label, nc.config, nc.created_at, nc.updated_at
+		FROM notify_channels nc
+		JOIN database_notify_channels dnc ON dnc.notify_channel_id = nc.id
+		WHERE dnc.database_id = ?
+		ORDER BY nc.kind, nc.label
+	`, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []NotifyChannel
+	for rows.Next() {
+		c, err := scanNotifyChannel(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (r *Registry) CreateNotifyChannel(ctx context.Context, kind, label, config string) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		"INSERT INTO notify_channels (kind, label, config) VALUES (?, ?, ?)",
+		kind, label, config,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateNotifyChannel overwrites the label and config blob — used by each
+// kind's edit form, which resubmits every field at once.
+func (r *Registry) UpdateNotifyChannel(ctx context.Context, id int64, label, config string) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE notify_channels SET label = ?, config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		label, config, id,
+	)
+	return err
+}
+
+func (r *Registry) DeleteNotifyChannel(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM notify_channels WHERE id = ?", id)
+	return err
+}
+
+// SetDatabaseNotifyChannels overwrites the full set of channels a database
+// notifies through (the database form resubmits the whole set at once, same
+// as setSharedScheduleDatabases).
+func (r *Registry) SetDatabaseNotifyChannels(ctx context.Context, databaseID int64, channelIDs []int64) error {
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM database_notify_channels WHERE database_id = ?", databaseID); err != nil {
+		return err
+	}
+	for _, channelID := range channelIDs {
+		if _, err := r.db.ExecContext(ctx,
+			"INSERT INTO database_notify_channels (database_id, notify_channel_id) VALUES (?, ?)",
+			databaseID, channelID,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }

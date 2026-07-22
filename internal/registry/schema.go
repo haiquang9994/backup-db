@@ -76,4 +76,27 @@ CREATE TABLE IF NOT EXISTS shared_schedule_times (
 );
 
 CREATE INDEX IF NOT EXISTS idx_shared_schedule_times_shared_schedule_id ON shared_schedule_times(shared_schedule_id);
+
+-- notify_channels holds every configured notification destination (a
+-- Telegram bot/chat today, more kinds later) — same kind/label/config shape
+-- as storage_targets. A channel gets every event (success and failure) for
+-- every database it's assigned to via database_notify_channels, a
+-- many-to-many join so one database can notify through any number of
+-- channels, and one channel can be reused across databases.
+CREATE TABLE IF NOT EXISTS notify_channels (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	kind       TEXT NOT NULL,               -- 'telegram'
+	label      TEXT NOT NULL,
+	config     TEXT NOT NULL,               -- kind-specific JSON
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS database_notify_channels (
+	database_id       INTEGER NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+	notify_channel_id INTEGER NOT NULL REFERENCES notify_channels(id) ON DELETE CASCADE,
+	PRIMARY KEY (database_id, notify_channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_database_notify_channels_channel_id ON database_notify_channels(notify_channel_id);
 `
