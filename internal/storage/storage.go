@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"golang.org/x/oauth2"
 
@@ -19,9 +20,22 @@ import (
 )
 
 // Provider uploads a local dump file to a remote destination, organized by
-// database name and backup date.
+// database name and backup date, and fetches it back for the admin UI's
+// per-database file list.
 type Provider interface {
-	Upload(ctx context.Context, dbname, date, filename, localPath string) error
+	// Upload returns remoteRef — a kind-specific opaque identifier (Google
+	// Drive file ID, S3 object key) — and the uploaded size in bytes.
+	// Callers persist both (internal/registry's backup_files table) so a
+	// later Download doesn't need to re-list the destination.
+	Upload(ctx context.Context, dbname, date, filename, localPath string) (remoteRef string, sizeBytes int64, err error)
+
+	// Download resolves remoteRef (as returned by Upload) back to the file
+	// content. Exactly one of redirectURL/body is set: a kind that can hand
+	// out a direct link (S3's presigned URL) sets redirectURL and leaves
+	// body nil; a kind that must stream through our own credentials
+	// (Google Drive's OAuth token) sets body instead, which the caller must
+	// Close.
+	Download(ctx context.Context, remoteRef string) (redirectURL string, body io.ReadCloser, contentType string, err error)
 }
 
 // New resolves targetID (a storage_targets row) and builds the matching

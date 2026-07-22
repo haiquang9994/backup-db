@@ -29,6 +29,14 @@ func runUpload(args []string) error {
 
 	ctx := context.Background()
 
+	// Looked up unconditionally (even when storage-target-id is passed
+	// explicitly) so the upload can still be recorded against the right
+	// database_id in backup_files below.
+	d, err := reg.GetByName(ctx, dbname)
+	if err != nil {
+		return fmt.Errorf("look up %s in registry: %w", dbname, err)
+	}
+
 	var targetID int64
 	if len(args) > 3 {
 		targetID, err = strconv.ParseInt(args[3], 10, 64)
@@ -36,10 +44,6 @@ func runUpload(args []string) error {
 			return fmt.Errorf("invalid storage-target-id %q: %w", args[3], err)
 		}
 	} else {
-		d, err := reg.GetByName(ctx, dbname)
-		if err != nil {
-			return fmt.Errorf("look up %s in registry: %w", dbname, err)
-		}
 		if d == nil {
 			return fmt.Errorf("%s is not in the registry — pass a storage-target-id explicitly", dbname)
 		}
@@ -52,5 +56,20 @@ func runUpload(args []string) error {
 	}
 
 	date := time.Now().Format("060102")
-	return store.Upload(ctx, dbname, date, filename, filePath)
+	remoteRef, sizeBytes, err := store.Upload(ctx, dbname, date, filename, filePath)
+	if err != nil {
+		return err
+	}
+
+	var databaseID int64
+	if d != nil {
+		databaseID = d.ID
+	}
+	if _, err := reg.CreateBackupFile(ctx, registry.BackupFile{
+		DatabaseID: databaseID, DBName: dbname, StorageTargetID: targetID,
+		Filename: filename, RemoteRef: remoteRef, SizeBytes: sizeBytes,
+	}); err != nil {
+		return fmt.Errorf("record backup file: %w", err)
+	}
+	return nil
 }

@@ -81,7 +81,7 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 	}
 
 	started := time.Now().In(loc)
-	jobErr := backupAndUpload(ctx, cfg, reg, job)
+	result, jobErr := backupAndUpload(ctx, cfg, reg, job)
 	duration := time.Since(started)
 	if jobErr != nil {
 		logErr("%s: FAILED: %v", job.DBName, jobErr)
@@ -97,6 +97,9 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 	}
 
 	recordBackupRun(ctx, reg, d, job, started, duration, jobErr)
+	if jobErr == nil {
+		recordBackupFile(ctx, reg, d, job, result)
+	}
 
 	if d == nil {
 		return
@@ -133,7 +136,37 @@ func recordBackupRun(ctx context.Context, reg *registry.Registry, d *registry.Da
 	}
 }
 
-func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Registry, job queue.Job) error {
+// recordBackupFile writes one entry to the admin UI's per-database file
+// list, best effort — a logging failure must never fail the job itself.
+// Only called after a successful upload, so result is always non-nil.
+func recordBackupFile(ctx context.Context, reg *registry.Registry, d *registry.Database, job queue.Job, result *uploadResult) {
+	var databaseID int64
+	if d != nil {
+		databaseID = d.ID
+	}
+	file := registry.BackupFile{
+		DatabaseID:      databaseID,
+		DBName:          job.DBName,
+		StorageTargetID: result.StorageTargetID,
+		Filename:        result.Filename,
+		RemoteRef:       result.RemoteRef,
+		SizeBytes:       result.SizeBytes,
+	}
+	if _, err := reg.CreateBackupFile(ctx, file); err != nil {
+		logErr("record backup file for %s: %v", job.DBName, err)
+	}
+}
+
+// uploadResult carries the details recordBackupFile needs, once
+// backupAndUpload's dump+upload has actually succeeded.
+type uploadResult struct {
+	Filename        string
+	RemoteRef       string
+	SizeBytes       int64
+	StorageTargetID int64
+}
+
+func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Registry, job queue.Job) (*uploadResult, error) {
 	start := time.Now()
 	params := dump.ParseParams(job.Params)
 
@@ -144,7 +177,7 @@ func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Regi
 	case "mongo":
 		ext = "archive"
 	default:
-		return fmt.Errorf("unknown driver: %s", job.Driver)
+		return nil, fmt.Errorf("unknown driver: %s", job.Driver)
 	}
 
 	date := time.Now().Format("060102")
@@ -163,7 +196,7 @@ func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Regi
 		err = dump.Mongo(ctx, job.DBName, params, outPath)
 	}
 	if err != nil {
-		return fmt.Errorf("dump failed: %w", err)
+		return nil, fmt.Errorf("dump failed: %w", err)
 	}
 	dumpDuration := time.Since(dumpStart)
 
@@ -174,28 +207,29 @@ func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Regi
 	logLine("%s (%s): dump ok, %.2f MB, %s", job.DBName, job.Driver, sizeMB, round(dumpDuration))
 
 	if job.StorageTargetID == 0 {
-		return fmt.Errorf("no storage destination selected for this database — assign one in the admin UI")
+		return nil, fmt.Errorf("no storage destination selected for this database — assign one in the admin UI")
 	}
 	target, err := reg.GetStorageTarget(ctx, job.StorageTargetID)
 	if err != nil {
-		return fmt.Errorf("load storage destination #%d: %w", job.StorageTargetID, err)
+		return nil, fmt.Errorf("load storage destination #%d: %w", job.StorageTargetID, err)
 	}
 	if target == nil {
-		return fmt.Errorf("storage destination #%d not found (was it deleted?)", job.StorageTargetID)
+		return nil, fmt.Errorf("storage destination #%d not found (was it deleted?)", job.StorageTargetID)
 	}
 	store, err := storage.Build(cfg, reg, *target)
 	if err != nil {
-		return fmt.Errorf("init storage destination: %w", err)
+		return nil, fmt.Errorf("init storage destination: %w", err)
 	}
 
 	uploadStart := time.Now()
-	if err := store.Upload(ctx, job.DBName, date, filename, outPath); err != nil {
-		return fmt.Errorf("upload failed: %w", err)
+	remoteRef, sizeBytes, err := store.Upload(ctx, job.DBName, date, filename, outPath)
+	if err != nil {
+		return nil, fmt.Errorf("upload failed: %w", err)
 	}
 	logLine("%s: upload ok -> %s %q, %s (tổng %s)", job.DBName, target.Kind, target.Label, round(time.Since(uploadStart)), round(time.Since(start)))
 
 	_ = os.Remove(outPath)
-	return nil
+	return &uploadResult{Filename: filename, RemoteRef: remoteRef, SizeBytes: sizeBytes, StorageTargetID: job.StorageTargetID}, nil
 }
 
 func round(d time.Duration) time.Duration {

@@ -7,11 +7,19 @@ package s3store
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
+
+// downloadURLExpiry is how long a presigned download link (handed out by
+// Download below, and ultimately by the admin UI's download button) stays
+// valid before it must be re-requested.
+const downloadURLExpiry = 15 * time.Minute
 
 // Config is the JSON shape stored in storage_targets.config for kind="s3".
 type Config struct {
@@ -42,15 +50,29 @@ func New(cfg Config) (*Client, error) {
 	return &Client{mc: mc, bucket: cfg.Bucket, prefix: cfg.Prefix}, nil
 }
 
-// Upload implements storage.Provider.
-func (c *Client) Upload(ctx context.Context, dbname, date, filename, localPath string) error {
+// Upload implements storage.Provider. The returned remoteRef is the object
+// key, which Download below needs to fetch it back later.
+func (c *Client) Upload(ctx context.Context, dbname, date, filename, localPath string) (string, int64, error) {
 	key := c.key(dbname, date, filename)
-	if _, err := c.mc.FPutObject(ctx, c.bucket, key, localPath, minio.PutObjectOptions{
+	info, err := c.mc.FPutObject(ctx, c.bucket, key, localPath, minio.PutObjectOptions{
 		ContentType: "application/gzip",
-	}); err != nil {
-		return fmt.Errorf("upload s3://%s/%s: %w", c.bucket, key, err)
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("upload s3://%s/%s: %w", c.bucket, key, err)
 	}
-	return nil
+	return key, info.Size, nil
+}
+
+// Download implements storage.Provider. S3-compatible stores can hand out a
+// time-limited signed URL directly, so the caller (the admin UI) can
+// redirect the browser straight to the bucket instead of proxying bytes
+// through our own server.
+func (c *Client) Download(ctx context.Context, remoteRef string) (string, io.ReadCloser, string, error) {
+	u, err := c.mc.PresignedGetObject(ctx, c.bucket, remoteRef, downloadURLExpiry, url.Values{})
+	if err != nil {
+		return "", nil, "", fmt.Errorf("presign s3://%s/%s: %w", c.bucket, remoteRef, err)
+	}
+	return u.String(), nil, "", nil
 }
 
 func (c *Client) key(dbname, date, filename string) string {

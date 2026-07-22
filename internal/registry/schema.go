@@ -119,4 +119,25 @@ CREATE TABLE IF NOT EXISTS backup_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_backup_runs_id_desc ON backup_runs(id DESC);
+
+-- backup_files records one successfully uploaded backup file per row,
+-- written right after the consumer's (or CLI upload command's) upload
+-- succeeds, so the admin UI can list/download past backups without
+-- querying the storage provider live for a directory listing. No FK on
+-- database_id (same reasoning as backup_runs above). remote_ref is opaque
+-- per storage kind (gdrive file ID | s3 object key) — meaningful only
+-- together with storage_target_id, which picks which Provider.Download to
+-- hand it to.
+CREATE TABLE IF NOT EXISTS backup_files (
+	id                INTEGER PRIMARY KEY AUTOINCREMENT,
+	database_id       INTEGER NOT NULL DEFAULT 0,
+	dbname            TEXT NOT NULL,
+	storage_target_id INTEGER NOT NULL DEFAULT 0,
+	filename          TEXT NOT NULL,
+	remote_ref        TEXT NOT NULL,
+	size_bytes        INTEGER NOT NULL DEFAULT 0,
+	created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_backup_files_database_id_id_desc ON backup_files(database_id, id DESC);
 `

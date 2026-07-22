@@ -27,7 +27,7 @@ func runAdmin(args []string) error {
 		log.Println("WARNING: ADMIN_USERNAME/ADMIN_PASSWORD not set — admin UI is running WITHOUT authentication")
 	}
 
-	srv := admin.NewServer(reg, q, cfg.AdminUsername, cfg.AdminPassword, cfg.GoogleCredentialsFile, cfg.SchedulerTimezone)
+	srv := admin.NewServer(cfg, reg, q, cfg.AdminUsername, cfg.AdminPassword, cfg.GoogleCredentialsFile, cfg.SchedulerTimezone)
 	addr := ":" + cfg.AdminPort
 	log.Println("Admin UI listening on", addr)
 	return http.ListenAndServe(addr, srv.Handler())

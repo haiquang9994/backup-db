@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -17,8 +18,10 @@ import (
 	"strings"
 	"time"
 
+	"backupdb/internal/config"
 	"backupdb/internal/queue"
 	"backupdb/internal/registry"
+	"backupdb/internal/storage"
 	"backupdb/internal/storage/gdrive"
 )
 
@@ -37,9 +40,10 @@ type Server struct {
 	password              string
 	googleCredentialsFile string
 	schedulerTimezone     string
+	cfg                   *config.Config // needed to build storage.Provider for file downloads
 }
 
-func NewServer(reg *registry.Registry, q *queue.Client, username, password, googleCredentialsFile, schedulerTimezone string) *Server {
+func NewServer(cfg *config.Config, reg *registry.Registry, q *queue.Client, username, password, googleCredentialsFile, schedulerTimezone string) *Server {
 	return &Server{
 		reg:                   reg,
 		q:                     q,
@@ -47,6 +51,7 @@ func NewServer(reg *registry.Registry, q *queue.Client, username, password, goog
 		password:              password,
 		googleCredentialsFile: googleCredentialsFile,
 		schedulerTimezone:     schedulerTimezone,
+		cfg:                   cfg,
 	}
 }
 
@@ -94,6 +99,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /notify-channels/{id}/delete", s.handleNotifyDelete)
 	mux.HandleFunc("GET /logs", s.handleLogs)
 	mux.HandleFunc("POST /logs/clear", s.handleLogsClear)
+	mux.HandleFunc("GET /databases/{id}/files", s.handleDatabaseFiles)
+	mux.HandleFunc("GET /databases/{id}/files/{fileID}/download", s.handleDatabaseFileDownload)
 
 	return s.basicAuth(mux)
 }
@@ -1170,6 +1177,114 @@ func (s *Server) handleLogsClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/logs", http.StatusSeeOther)
+}
+
+// fileListLimit caps how far back a database's file list goes — same
+// "recent, not a full audit trail" reasoning as logListLimit.
+const fileListLimit = 200
+
+// backupFileView adds a human-readable size to a BackupFile for display.
+type backupFileView struct {
+	registry.BackupFile
+	SizeDisplay string
+}
+
+func (s *Server) handleDatabaseFiles(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	d, err := s.reg.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if d == nil {
+		http.NotFound(w, r)
+		return
+	}
+	files, err := s.reg.ListBackupFilesByDatabase(r.Context(), id, fileListLimit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	views := make([]backupFileView, len(files))
+	for i, f := range files {
+		views[i] = backupFileView{BackupFile: f, SizeDisplay: humanSize(f.SizeBytes)}
+	}
+	data := struct {
+		Database registry.Database
+		Files    []backupFileView
+		Limit    int
+	}{*d, views, fileListLimit}
+	if err := tmpl.ExecuteTemplate(w, "database_files.html", data); err != nil {
+		log.Println("render database files:", err)
+	}
+}
+
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for n2 := n / unit; n2 >= unit; n2 /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// handleDatabaseFileDownload resolves one backup_files row back to actual
+// content via its storage_target_id's Provider.Download — either an S3
+// presigned URL (redirect, no bytes touch this server) or a Google Drive
+// stream (proxied through our own OAuth token, since Drive files here are
+// never made publicly linkable).
+func (s *Server) handleDatabaseFileDownload(w http.ResponseWriter, r *http.Request) {
+	fileID, err := strconv.ParseInt(r.PathValue("fileID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid file id", http.StatusBadRequest)
+		return
+	}
+	file, err := s.reg.GetBackupFile(r.Context(), fileID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if file == nil {
+		http.NotFound(w, r)
+		return
+	}
+	target, err := s.reg.GetStorageTarget(r.Context(), file.StorageTargetID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if target == nil {
+		http.Error(w, "storage đích của file này không còn tồn tại (đã bị xoá?)", http.StatusGone)
+		return
+	}
+	provider, err := storage.Build(s.cfg, s.reg, *target)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	redirectURL, body, contentType, err := provider.Download(r.Context(), file.RemoteRef)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if redirectURL != "" {
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+		return
+	}
+	defer body.Close()
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", file.Filename))
+	io.Copy(w, body)
 }
 
 func parseForm(r *http.Request) (registry.Database, []int64, error) {

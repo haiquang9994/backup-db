@@ -139,20 +139,21 @@ func FetchEmail(ctx context.Context, tok *oauth2.Token) (string, error) {
 	return info.Email, nil
 }
 
-// Upload implements storage.Provider.
-func (c *Client) Upload(ctx context.Context, dbname, date, filename, localPath string) error {
+// Upload implements storage.Provider. The returned remoteRef is the Drive
+// file ID, which Download below needs to fetch it back later.
+func (c *Client) Upload(ctx context.Context, dbname, date, filename, localPath string) (string, int64, error) {
 	dbFolderID, err := c.findOrCreateFolder(ctx, dbname, c.rootID)
 	if err != nil {
-		return fmt.Errorf("find/create db folder: %w", err)
+		return "", 0, fmt.Errorf("find/create db folder: %w", err)
 	}
 	dateFolderID, err := c.findOrCreateFolder(ctx, date, dbFolderID)
 	if err != nil {
-		return fmt.Errorf("find/create date folder: %w", err)
+		return "", 0, fmt.Errorf("find/create date folder: %w", err)
 	}
 
 	f, err := os.Open(localPath)
 	if err != nil {
-		return err
+		return "", 0, err
 	}
 	defer f.Close()
 
@@ -170,14 +171,27 @@ func (c *Client) Upload(ctx context.Context, dbname, date, filename, localPath s
 	}
 
 	// Chunked (resumable) upload keeps memory flat for large dumps.
-	_, err = c.svc.Files.Create(file).
+	created, err := c.svc.Files.Create(file).
 		Media(f, googleapi.ChunkSize(1<<20)).
+		Fields("id, size").
 		Context(ctx).
 		Do()
 	if err != nil {
-		return fmt.Errorf("upload %s: %w", filename, err)
+		return "", 0, fmt.Errorf("upload %s: %w", filename, err)
 	}
-	return nil
+	return created.Id, created.Size, nil
+}
+
+// Download implements storage.Provider. Drive files aren't made publicly
+// linkable (WritersCanShare is false on upload), so the only way to fetch
+// one back is to stream it through our own OAuth token — there is no
+// redirectURL to hand out, unlike S3's presigned URLs.
+func (c *Client) Download(ctx context.Context, remoteRef string) (string, io.ReadCloser, string, error) {
+	resp, err := c.svc.Files.Get(remoteRef).Context(ctx).Download()
+	if err != nil {
+		return "", nil, "", fmt.Errorf("download %s: %w", remoteRef, err)
+	}
+	return "", resp.Body, resp.Header.Get("Content-Type"), nil
 }
 
 func (c *Client) findOrCreateFolder(ctx context.Context, name, parentID string) (string, error) {

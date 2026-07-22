@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BackupDB — File backup của {{.Database.Name}}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>File backup — {{.Database.Name}}</h1>
+      <p class="subtitle">{{len .Files}} file gần nhất (tối đa {{.Limit}}) đã upload thành công.</p>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+  <thead><tr><th>Thời gian</th><th>Tên file</th><th>Dung lượng</th><th>Hành động</th></tr></thead>
+  <tbody>
+  {{range .Files}}
+  <tr>
+    <td>{{.CreatedAt}}</td>
+    <td>{{.Filename}}</td>
+    <td>{{.SizeDisplay}}</td>
+    <td class="actions">
+      <a class="button" href="/databases/{{.DatabaseID}}/files/{{.ID}}/download">{{template "icon-download"}} Tải về</a>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td class="empty-state" colspan="4">Chưa có file nào — sẽ xuất hiện sau lần backup thành công đầu tiên.</td></tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
+
+  <a class="back-link" href="/">{{template "icon-back"}} Quay lại danh sách database</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

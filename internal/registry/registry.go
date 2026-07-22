@@ -914,3 +914,76 @@ func (r *Registry) DeleteAllBackupRuns(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx, "DELETE FROM backup_runs")
 	return err
 }
+
+// BackupFile is one file successfully uploaded to a storage destination,
+// recorded right after upload so the admin UI can list/download past
+// backups per database without querying the storage provider live.
+// DatabaseID is 0 if the database has since been deleted or renamed; DBName
+// is captured as of upload time so the record stays meaningful either way.
+// RemoteRef is opaque per storage kind (Google Drive file ID, or S3 object
+// key) — pass it back to the matching storage_target_id's Provider.Download
+// to fetch the file.
+type BackupFile struct {
+	ID              int64
+	DatabaseID      int64
+	DBName          string
+	StorageTargetID int64
+	Filename        string
+	RemoteRef       string
+	SizeBytes       int64
+	CreatedAt       string
+}
+
+// CreateBackupFile records one successful upload.
+func (r *Registry) CreateBackupFile(ctx context.Context, f BackupFile) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		`INSERT INTO backup_files (database_id, dbname, storage_target_id, filename, remote_ref, size_bytes)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		f.DatabaseID, f.DBName, f.StorageTargetID, f.Filename, f.RemoteRef, f.SizeBytes,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ListBackupFilesByDatabase returns files uploaded for one database, newest
+// first, capped at limit.
+func (r *Registry) ListBackupFilesByDatabase(ctx context.Context, databaseID int64, limit int) ([]BackupFile, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, database_id, dbname, storage_target_id, filename, remote_ref, size_bytes, created_at
+		 FROM backup_files WHERE database_id = ? ORDER BY id DESC LIMIT ?`,
+		databaseID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []BackupFile
+	for rows.Next() {
+		var f BackupFile
+		if err := rows.Scan(&f.ID, &f.DatabaseID, &f.DBName, &f.StorageTargetID, &f.Filename, &f.RemoteRef, &f.SizeBytes, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// GetBackupFile looks up one file record, used by the download handler to
+// resolve which storage target + remote_ref to fetch.
+func (r *Registry) GetBackupFile(ctx context.Context, id int64) (*BackupFile, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, database_id, dbname, storage_target_id, filename, remote_ref, size_bytes, created_at
+		 FROM backup_files WHERE id = ?`, id)
+	var f BackupFile
+	err := row.Scan(&f.ID, &f.DatabaseID, &f.DBName, &f.StorageTargetID, &f.Filename, &f.RemoteRef, &f.SizeBytes, &f.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
