@@ -145,7 +145,7 @@ type formData struct {
 
 // scheduleTimesCard is the data schedule_times.html's shared
 // "schedule-times-card" block renders — the same UI for a single database's
-// own schedules (form.html) and for a shared schedule's group times
+// own schedules (database_form.html) and for a shared schedule's group times
 // (shared_schedule_form.html), since both are just a list of
 // {ID, TimeOfDay, LastRunDate} rows with an add/delete flow.
 type scheduleTimesCard struct {
@@ -193,7 +193,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		views[i] = listDatabaseView{Database: d, AgentLabel: label}
 	}
 
-	if err := tmpl.ExecuteTemplate(w, "list.html", views); err != nil {
+	if err := tmpl.ExecuteTemplate(w, "databases.html", views); err != nil {
 		log.Println("render list:", err)
 	}
 }
@@ -218,7 +218,7 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 		Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets, RemoteAgents: agents,
 		NotifyChannels: channels, SelectedChannels: map[int64]bool{}, Timezone: s.timezone,
 	}
-	if err := tmpl.ExecuteTemplate(w, "form.html", data); err != nil {
+	if err := tmpl.ExecuteTemplate(w, "database_form.html", data); err != nil {
 		log.Println("render form:", err)
 	}
 }
@@ -297,7 +297,7 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 			DeletePrefix: "/schedules/",
 		},
 	}
-	if err := tmpl.ExecuteTemplate(w, "form.html", data); err != nil {
+	if err := tmpl.ExecuteTemplate(w, "database_form.html", data); err != nil {
 		log.Println("render form:", err)
 	}
 }
