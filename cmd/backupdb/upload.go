@@ -21,6 +21,11 @@ func runUpload(args []string) error {
 	dbname, filePath, filename := args[0], args[1], args[2]
 
 	cfg := config.Load()
+	loc, err := time.LoadLocation(cfg.Timezone)
+	if err != nil {
+		return fmt.Errorf("load timezone %s: %w", cfg.Timezone, err)
+	}
+
 	reg, err := registry.Open(cfg.SQLitePath)
 	if err != nil {
 		return fmt.Errorf("open registry: %w", err)
@@ -55,7 +60,7 @@ func runUpload(args []string) error {
 		return fmt.Errorf("resolve storage destination: %w", err)
 	}
 
-	date := time.Now().Format("060102")
+	date := time.Now().In(loc).Format("060102")
 	remoteRef, sizeBytes, err := store.Upload(ctx, dbname, date, filename, filePath)
 	if err != nil {
 		return err

@@ -27,17 +27,18 @@ import (
 // for the agent to dump and upload without ever touching the central
 // registry itself.
 type RunRequest struct {
-	DBName  string        `json:"dbname"`
-	Driver  string        `json:"driver"`
-	Params  string        `json:"params"` // pipe-delimited, see dump.ParseParams
-	Storage StorageConfig `json:"storage"`
+	DBName   string        `json:"dbname"`
+	Driver   string        `json:"driver"`
+	Params   string        `json:"params"` // pipe-delimited, see dump.ParseParams
+	Storage  StorageConfig `json:"storage"`
+	Timezone string        `json:"timezone"` // IANA zone (config.Config.Timezone) — the agent's own machine may be in a different zone, so the central side tells it what to stamp filenames with
 }
 
 // StorageConfig mirrors registry.StorageTarget's Kind+Config shape, resolved
 // by the central server before sending — the agent has no registry of its
 // own to look this up from.
 type StorageConfig struct {
-	Kind   string `json:"kind"`  // "gdrive" | "s3"
+	Kind   string `json:"kind"` // "gdrive" | "s3"
 	Label  string `json:"label"`
 	Config string `json:"config"` // kind-specific JSON, same shape as storage_targets.config
 }

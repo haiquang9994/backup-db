@@ -22,9 +22,9 @@ import (
 func runScheduler(args []string) error {
 	cfg := config.Load()
 
-	loc, err := time.LoadLocation(cfg.SchedulerTimezone)
+	loc, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
-		return fmt.Errorf("load timezone %s: %w", cfg.SchedulerTimezone, err)
+		return fmt.Errorf("load timezone %s: %w", cfg.Timezone, err)
 	}
 
 	reg, err := registry.Open(cfg.SQLitePath)
@@ -39,7 +39,7 @@ func runScheduler(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	fmt.Printf("Scheduler started (timezone %s), checking every 30s...\n", cfg.SchedulerTimezone)
+	fmt.Printf("Scheduler started (timezone %s), checking every 30s...\n", cfg.Timezone)
 
 	checkAndEnqueue(ctx, reg, q, loc)
 

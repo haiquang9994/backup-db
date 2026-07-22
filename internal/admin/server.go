@@ -40,18 +40,18 @@ type Server struct {
 	username              string
 	password              string
 	googleCredentialsFile string
-	schedulerTimezone     string
+	timezone              string
 	cfg                   *config.Config // needed to build storage.Provider for file downloads
 }
 
-func NewServer(cfg *config.Config, reg *registry.Registry, q *queue.Client, username, password, googleCredentialsFile, schedulerTimezone string) *Server {
+func NewServer(cfg *config.Config, reg *registry.Registry, q *queue.Client, username, password, googleCredentialsFile, timezone string) *Server {
 	return &Server{
 		reg:                   reg,
 		q:                     q,
 		username:              username,
 		password:              password,
 		googleCredentialsFile: googleCredentialsFile,
-		schedulerTimezone:     schedulerTimezone,
+		timezone:              timezone,
 		cfg:                   cfg,
 	}
 }
@@ -216,7 +216,7 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 	}
 	data := formData{
 		Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets, RemoteAgents: agents,
-		NotifyChannels: channels, SelectedChannels: map[int64]bool{}, Timezone: s.schedulerTimezone,
+		NotifyChannels: channels, SelectedChannels: map[int64]bool{}, Timezone: s.timezone,
 	}
 	if err := tmpl.ExecuteTemplate(w, "form.html", data); err != nil {
 		log.Println("render form:", err)
@@ -286,10 +286,10 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 		selectedChannels[c.ID] = true
 	}
 	data := formData{
-		Action: "/edit/" + r.PathValue("id"), Database: *d, Editing: true, StorageTargets: targets, RemoteAgents: agents, Timezone: s.schedulerTimezone,
+		Action: "/edit/" + r.PathValue("id"), Database: *d, Editing: true, StorageTargets: targets, RemoteAgents: agents, Timezone: s.timezone,
 		NotifyChannels: channels, SelectedChannels: selectedChannels,
 		TimesCard: scheduleTimesCard{
-			Title:        fmt.Sprintf("Lịch backup tự động (giờ %s)", s.schedulerTimezone),
+			Title:        fmt.Sprintf("Lịch backup tự động (giờ %s)", s.timezone),
 			Hint:         "Có thể thêm nhiều giờ trong ngày — mỗi giờ sẽ tự đẩy 1 job backup riêng cho database này.",
 			Times:        schedules,
 			EmptyMsg:     "Chưa có lịch nào — database sẽ không tự động backup.",
@@ -385,7 +385,7 @@ func (s *Server) renderSharedScheduleError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	data := sharedScheduleFormData{
-		Editing: editing, Action: action, Databases: dbs, Selected: selectedSet(databaseIDs), Timezone: s.schedulerTimezone, Error: errMsg,
+		Editing: editing, Action: action, Databases: dbs, Selected: selectedSet(databaseIDs), Timezone: s.timezone, Error: errMsg,
 	}
 	if editing {
 		data.TimesCard = s.sharedScheduleTimesCard(id, times)
@@ -397,7 +397,7 @@ func (s *Server) renderSharedScheduleError(w http.ResponseWriter, r *http.Reques
 // shared schedule's Times, used by both the edit page and its error re-render.
 func (s *Server) sharedScheduleTimesCard(id int64, times []registry.SharedScheduleTime) scheduleTimesCard {
 	return scheduleTimesCard{
-		Title:        fmt.Sprintf("Khung giờ backup (giờ %s)", s.schedulerTimezone),
+		Title:        fmt.Sprintf("Khung giờ backup (giờ %s)", s.timezone),
 		Hint:         "Có thể thêm nhiều khung giờ trong ngày — mỗi giờ tự đẩy 1 job backup riêng cho tất cả database trong nhóm này.",
 		Times:        times,
 		EmptyMsg:     "Chưa có khung giờ nào — lịch chung sẽ không tự động chạy.",
@@ -420,7 +420,7 @@ func (s *Server) handleSharedScheduleNewForm(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderSharedScheduleForm(w, sharedScheduleFormData{Action: "/shared-schedules", Databases: dbs, Selected: map[int64]bool{}, Timezone: s.schedulerTimezone})
+	s.renderSharedScheduleForm(w, sharedScheduleFormData{Action: "/shared-schedules", Databases: dbs, Selected: map[int64]bool{}, Timezone: s.timezone})
 }
 
 func (s *Server) handleSharedScheduleEditForm(w http.ResponseWriter, r *http.Request) {
@@ -452,7 +452,7 @@ func (s *Server) handleSharedScheduleEditForm(w http.ResponseWriter, r *http.Req
 		Action:    fmt.Sprintf("/shared-schedules/%d", id),
 		Databases: dbs,
 		Selected:  selected,
-		Timezone:  s.schedulerTimezone,
+		Timezone:  s.timezone,
 		TimesCard: s.sharedScheduleTimesCard(id, sched.Times),
 	})
 }
@@ -735,14 +735,14 @@ func (s *Server) handleStorageList(w http.ResponseWriter, r *http.Request) {
 
 // formatTimestamp reformats a SQLite DATETIME string (RFC3339, as returned
 // for CURRENT_TIMESTAMP columns) into "YYYY-MM-DD HH:MM:SS" in the
-// deployment's scheduler timezone, matching how backup_runs.started_at
+// deployment's configured timezone, matching how backup_runs.started_at
 // already displays. Falls back to the raw string if it doesn't parse.
 func (s *Server) formatTimestamp(raw string) string {
 	t, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
 		return raw
 	}
-	loc, err := time.LoadLocation(s.schedulerTimezone)
+	loc, err := time.LoadLocation(s.timezone)
 	if err != nil {
 		loc = time.UTC
 	}

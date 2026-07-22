@@ -315,8 +315,15 @@ func runBackupJob(ctx context.Context, cfg *config.Config, req agentproto.RunReq
 		return nil, err
 	}
 
-	date := time.Now().Format("060102")
-	stamp := time.Now().Format("15h04")
+	// The agent runs on a different machine, possibly in a different OS
+	// timezone — filenames must use the central deployment's configured
+	// zone (sent along on every request), not this host's local clock.
+	loc, err := time.LoadLocation(req.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	date := time.Now().In(loc).Format("060102")
+	stamp := time.Now().In(loc).Format("15h04")
 	filename := fmt.Sprintf("%s_%s_%s.%s.gz", req.DBName, date, stamp, ext)
 	outPath := filepath.Join(cfg.TmpDir, filename)
 

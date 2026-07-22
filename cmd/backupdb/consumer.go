@@ -34,9 +34,9 @@ import (
 func runConsumer(args []string) error {
 	cfg := config.Load()
 
-	loc, err := time.LoadLocation(cfg.SchedulerTimezone)
+	loc, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
-		return fmt.Errorf("load timezone %s: %w", cfg.SchedulerTimezone, err)
+		return fmt.Errorf("load timezone %s: %w", cfg.Timezone, err)
 	}
 
 	if err := os.MkdirAll(cfg.TmpDir, 0o755); err != nil {
@@ -102,7 +102,7 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 	}
 
 	started := time.Now().In(loc)
-	result, jobErr := backupAndUpload(ctx, cfg, reg, job)
+	result, jobErr := backupAndUpload(ctx, cfg, reg, loc, job)
 	duration := time.Since(started)
 	if jobErr != nil {
 		logErr("%s: FAILED: %v", job.DBName, jobErr)
@@ -187,9 +187,9 @@ type uploadResult struct {
 	StorageTargetID int64
 }
 
-func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Registry, job queue.Job) (*uploadResult, error) {
+func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Registry, loc *time.Location, job queue.Job) (*uploadResult, error) {
 	if job.AgentID != 0 {
-		return remoteBackupAndUpload(ctx, reg, job)
+		return remoteBackupAndUpload(ctx, reg, loc, job)
 	}
 
 	start := time.Now()
@@ -200,8 +200,8 @@ func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Regi
 		return nil, err
 	}
 
-	date := time.Now().Format("060102")
-	stamp := time.Now().Format("15h04")
+	date := time.Now().In(loc).Format("060102")
+	stamp := time.Now().In(loc).Format("15h04")
 	filename := fmt.Sprintf("%s_%s_%s.%s.gz", job.DBName, date, stamp, ext)
 	outPath := filepath.Join(cfg.TmpDir, filename)
 
@@ -270,7 +270,7 @@ const (
 // success the returned *uploadResult is identical in shape to the local
 // path's, so every caller downstream (recordBackupRun/recordBackupFile/
 // notify) needs no branching of its own.
-func remoteBackupAndUpload(ctx context.Context, reg *registry.Registry, job queue.Job) (*uploadResult, error) {
+func remoteBackupAndUpload(ctx context.Context, reg *registry.Registry, loc *time.Location, job queue.Job) (*uploadResult, error) {
 	agent, err := reg.GetRemoteAgent(ctx, job.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("load remote agent #%d: %w", job.AgentID, err)
@@ -291,9 +291,10 @@ func remoteBackupAndUpload(ctx context.Context, reg *registry.Registry, job queu
 
 	client := agentproto.NewClient(agent.Endpoint, agent.Token, agent.CertFingerprint)
 	jobID, err := client.Run(ctx, agentproto.RunRequest{
-		DBName: job.DBName,
-		Driver: job.Driver,
-		Params: job.Params,
+		DBName:   job.DBName,
+		Driver:   job.Driver,
+		Params:   job.Params,
+		Timezone: loc.String(),
 		Storage: agentproto.StorageConfig{
 			Kind: target.Kind, Label: target.Label, Config: target.Config,
 		},

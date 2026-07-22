@@ -6,7 +6,7 @@ Tính năng chính:
 
 - Kết nối MySQL/PostgreSQL/MongoDB đích qua **TCP trực tiếp** (host/port/user/pass) — không cần `docker exec`, không cần mount `/var/run/docker.sock`. Database đích có thể là container khác trên network `dbnet` (host = tên container) hoặc cài trực tiếp trên server chạy Docker (host = `host.docker.internal`, đã cấu hình sẵn `extra_hosts` trong `docker-compose.yml`) — `consumer`/`agent` dùng nguyên văn giá trị `host` đã khai báo, không tự đổi gì cả, nên nhập `localhost`/`127.0.0.1` sẽ trỏ vào chính container đó (không có database nào), phải nhập đúng `host.docker.internal` nếu database nằm trực tiếp trên server.
 - Danh sách database cần backup, lịch backup, nơi lưu trữ, và kênh thông báo đều nằm trong **SQLite**, quản lý qua **giao diện web** (`admin`).
-- **Lịch backup lưu trong SQLite**, mỗi database có thể có nhiều giờ backup/ngày, quản lý ngay trên trang Sửa database — không dùng crontab. Ngoài lịch riêng từng database còn có **lịch chung** (trang "Lịch chung"): 1 nhóm database dùng chung bất kỳ số khung giờ nào, không cần lặp lại cấu hình cho từng database. Giờ trong mọi lịch diễn giải theo 1 timezone chung cho cả deployment (`SCHEDULER_TIMEZONE`, mặc định `Asia/Ho_Chi_Minh`).
+- **Lịch backup lưu trong SQLite**, mỗi database có thể có nhiều giờ backup/ngày, quản lý ngay trên trang Sửa database — không dùng crontab. Ngoài lịch riêng từng database còn có **lịch chung** (trang "Lịch chung"): 1 nhóm database dùng chung bất kỳ số khung giờ nào, không cần lặp lại cấu hình cho từng database. Giờ trong mọi lịch, cũng như ngày giờ trong tên file backup, diễn giải theo 1 timezone chung cho cả deployment (`TIMEZONE`, mặc định `Asia/Ho_Chi_Minh`).
 - **Nhiều nơi lưu trữ cùng lúc**: có thể kết nối nhiều tài khoản Google Drive và nhiều cấu hình S3 (AWS S3, MinIO, R2, Spaces...), mỗi database tự chọn upload vào đâu, quản lý ở trang "Nơi lưu trữ" trong admin UI.
 - **Nhiều kênh thông báo**: kênh Telegram (gửi thẳng qua Bot API, không qua relay trung gian) hôm nay, thêm loại kênh khác sau này — mỗi database tự chọn bất kỳ số kênh nào, quản lý ở trang "Thông báo" trong admin UI.
 - **Nhật ký backup** ngay trên web (trang "Nhật ký"): mỗi job `consumer` xử lý xong (thành công hoặc lỗi) đều được ghi vào SQLite — không cần `docker logs`. Xem được database, driver, thời lượng, thông báo lỗi; có nút xoá toàn bộ khi muốn dọn.
@@ -33,7 +33,7 @@ Thêm loại đích mới sau này chỉ cần thêm 1 package implement `Provid
 
 ## Cài đặt lần đầu
 
-1. Copy `.env.example` → `.env`, điền `ADMIN_USERNAME`/`ADMIN_PASSWORD` (và `SCHEDULER_TIMEZONE` nếu không dùng giờ Việt Nam).
+1. Copy `.env.example` → `.env`, điền `ADMIN_USERNAME`/`ADMIN_PASSWORD` (và `TIMEZONE` nếu không dùng giờ Việt Nam).
 2. Đặt `google/credentials.json` (OAuth client tải từ Google Cloud Console, loại "Desktop app") vào thư mục `docker/google/`. File này là **danh tính của app**, dùng chung cho mọi tài khoản Google bạn kết nối — không phải thông tin đăng nhập.
 3. Tạo network dùng chung với các container database cần backup (nếu chưa có), rồi join các container đó vào:
    ```bash

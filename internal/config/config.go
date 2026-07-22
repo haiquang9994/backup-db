@@ -20,13 +20,14 @@ type Config struct {
 
 	SQLitePath string
 
-	// SchedulerTimezone is the IANA zone schedules and shared schedule times
-	// are interpreted in — both by the scheduler when deciding what's due,
-	// and in the admin UI's "(giờ ...)" labels. One value for the whole
-	// deployment, not per admin/browser: schedules are stored as plain
-	// "HH:MM" with no timezone of their own, so everyone reading/editing
-	// them needs to agree on what zone that means.
-	SchedulerTimezone string
+	// Timezone is the IANA zone for the whole deployment: the scheduler uses
+	// it to decide what's due, the admin UI uses it for "(giờ ...)" labels
+	// and timestamp display, and the consumer/agent/upload paths use it to
+	// stamp backup filenames and the storage date-folder. One value for the
+	// whole deployment, not per admin/browser/agent server — an agent may
+	// run on a different machine with a different OS clock/zone, so it must
+	// be told this value rather than using its own local time.
+	Timezone string
 
 	AdminUsername string
 	AdminPassword string
@@ -60,7 +61,7 @@ func Load() *Config {
 
 		SQLitePath: getEnv("SQLITE_PATH", "./data/backupdb.sqlite3"),
 
-		SchedulerTimezone: getEnv("SCHEDULER_TIMEZONE", "Asia/Ho_Chi_Minh"),
+		Timezone: getEnv("TIMEZONE", "Asia/Ho_Chi_Minh"),
 
 		AdminUsername: getEnv("ADMIN_USERNAME", ""),
 		AdminPassword: getEnv("ADMIN_PASSWORD", ""),
