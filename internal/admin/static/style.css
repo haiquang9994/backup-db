@@ -62,7 +62,7 @@ a { color: var(--accent); }
 }
 
 .topbar-inner {
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 0.9rem 1.25rem;
   display: flex;
@@ -103,7 +103,7 @@ a { color: var(--accent); }
 /* ---- page shell ------------------------------------------------------ */
 
 main {
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 2rem 1.25rem 4rem;
 }
@@ -189,7 +189,7 @@ td.empty-state {
   padding: 2.5rem 1rem;
 }
 
-.actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+.actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: nowrap; }
 
 /* ---- badges ---------------------------------------------------------- */
 
@@ -201,6 +201,7 @@ td.empty-state {
   border-radius: 999px;
   font-size: 0.78rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 .badge::before {
   content: "";
