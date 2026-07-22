@@ -307,7 +307,7 @@ type backupResult struct {
 // resolves and sends the full config), no backup_runs/backup_files
 // recording (the central server does that once it polls this result back).
 func runBackupJob(ctx context.Context, cfg *config.Config, req agentproto.RunRequest) (*backupResult, error) {
-	params := dump.ParseParamsRaw(req.Params)
+	params := dump.ParseParams(req.Params)
 
 	ext, err := dump.Extension(req.Driver)
 	if err != nil {
