@@ -13,6 +13,11 @@ services:
     build: .
     command: ["consumer"]
     env_file: .env
+    extra_hosts:
+      # Lets a database "host" field target the Docker host itself (e.g. a
+      # MySQL/Postgres/Mongo installed directly on the server, not in a
+      # container) — set that database's host to host.docker.internal.
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./google:/app/google       # credentials.json (OAuth app identity; tokens live in SQLite)
       - sqlite-data:/app/data      # reads storage_targets to resolve each job's upload destination
@@ -41,6 +46,8 @@ services:
     build: .
     command: ["admin"]
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${ADMIN_PORT:-8080}:${ADMIN_PORT:-8080}"
     volumes:

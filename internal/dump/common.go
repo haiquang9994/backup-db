@@ -33,12 +33,24 @@ func ParseParams(raw string) Params {
 		return ""
 	}
 	return Params{
-		Host:     get(0),
+		Host:     resolveHost(get(0)),
 		Port:     get(1),
 		Username: get(2),
 		Password: get(3),
 		AuthDB:   get(4),
 	}
+}
+
+// resolveHost rewrites "localhost"/"127.0.0.1" to host.docker.internal: the
+// consumer always runs inside its own container, where those addresses only
+// ever reach the container itself, never a database installed directly on
+// the Docker host — which is what a user entering "localhost" actually
+// means. docker-compose.yml maps host.docker.internal via extra_hosts.
+func resolveHost(host string) string {
+	if host == "localhost" || host == "127.0.0.1" {
+		return "host.docker.internal"
+	}
+	return host
 }
 
 // runToGzipFile executes name(args) with the given extra env vars and
