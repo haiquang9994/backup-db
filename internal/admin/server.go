@@ -92,6 +92,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /notify/telegram/{id}/edit", s.handleNotifyTelegramEditForm)
 	mux.HandleFunc("POST /notify/telegram/{id}", s.handleNotifyUpdateTelegram)
 	mux.HandleFunc("POST /notify-channels/{id}/delete", s.handleNotifyDelete)
+	mux.HandleFunc("GET /logs", s.handleLogs)
+	mux.HandleFunc("POST /logs/clear", s.handleLogsClear)
 
 	return s.basicAuth(mux)
 }
@@ -1129,6 +1131,45 @@ func (s *Server) handleNotifyDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/notify", http.StatusSeeOther)
+}
+
+// logListLimit caps how far back the "Nhật ký" page looks — it's meant for
+// "what happened recently", not a full audit trail with pagination.
+const logListLimit = 300
+
+// logRunView adds a human-readable duration ("2.3s" instead of a raw
+// millisecond count) to a BackupRun for display.
+type logRunView struct {
+	registry.BackupRun
+	Duration string
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	runs, err := s.reg.ListBackupRuns(r.Context(), logListLimit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	views := make([]logRunView, len(runs))
+	for i, run := range runs {
+		d := (time.Duration(run.DurationMS) * time.Millisecond).Round(100 * time.Millisecond)
+		views[i] = logRunView{BackupRun: run, Duration: d.String()}
+	}
+	data := struct {
+		Runs  []logRunView
+		Limit int
+	}{views, logListLimit}
+	if err := tmpl.ExecuteTemplate(w, "logs.html", data); err != nil {
+		log.Println("render logs:", err)
+	}
+}
+
+func (s *Server) handleLogsClear(w http.ResponseWriter, r *http.Request) {
+	if err := s.reg.DeleteAllBackupRuns(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/logs", http.StatusSeeOther)
 }
 
 func parseForm(r *http.Request) (registry.Database, []int64, error) {

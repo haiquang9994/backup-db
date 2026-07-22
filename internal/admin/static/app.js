@@ -47,6 +47,11 @@ function applyAction(btn) {
     return;
   }
 
+  if (action === "reload") {
+    location.reload();
+    return;
+  }
+
   if (action === "flash") {
     const original = labelEl(btn).textContent;
     setLabel(btn, "Đã đẩy ✓");

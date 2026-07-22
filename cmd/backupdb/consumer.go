@@ -32,6 +32,11 @@ import (
 func runConsumer(args []string) error {
 	cfg := config.Load()
 
+	loc, err := time.LoadLocation(cfg.SchedulerTimezone)
+	if err != nil {
+		return fmt.Errorf("load timezone %s: %w", cfg.SchedulerTimezone, err)
+	}
+
 	if err := os.MkdirAll(cfg.TmpDir, 0o755); err != nil {
 		return fmt.Errorf("prepare tmp dir: %w", err)
 	}
@@ -63,19 +68,21 @@ func runConsumer(args []string) error {
 		if job == nil {
 			continue
 		}
-		processJob(ctx, cfg, reg, *job)
+		processJob(ctx, cfg, reg, loc, *job)
 	}
 
 	logLine("Shutting down gracefully...")
 	return nil
 }
 
-func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry, job queue.Job) {
+func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry, loc *time.Location, job queue.Job) {
 	if job.Cmd != "backup" {
 		return
 	}
 
+	started := time.Now().In(loc)
 	jobErr := backupAndUpload(ctx, cfg, reg, job)
+	duration := time.Since(started)
 	if jobErr != nil {
 		logErr("%s: FAILED: %v", job.DBName, jobErr)
 	}
@@ -87,8 +94,10 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 	d, err := reg.GetByName(ctx, job.DBName)
 	if err != nil {
 		logErr("notify: look up %s: %v", job.DBName, err)
-		return
 	}
+
+	recordBackupRun(ctx, reg, d, job, started, duration, jobErr)
+
 	if d == nil {
 		return
 	}
@@ -96,6 +105,31 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 		notify.DispatchError(ctx, reg, d.ID, cfg.ProjectName, job.DBName, jobErr)
 	} else {
 		notify.DispatchSuccess(ctx, reg, d.ID, cfg.ProjectName, job.DBName, job.Driver)
+	}
+}
+
+// recordBackupRun writes one entry to the admin UI's "Nhật ký" log, best
+// effort — a logging failure must never fail the job itself.
+func recordBackupRun(ctx context.Context, reg *registry.Registry, d *registry.Database, job queue.Job, started time.Time, duration time.Duration, jobErr error) {
+	var databaseID int64
+	if d != nil {
+		databaseID = d.ID
+	}
+	status, message := "success", ""
+	if jobErr != nil {
+		status, message = "error", jobErr.Error()
+	}
+	run := registry.BackupRun{
+		DatabaseID: databaseID,
+		DBName:     job.DBName,
+		Driver:     job.Driver,
+		Status:     status,
+		Message:    message,
+		DurationMS: duration.Milliseconds(),
+		StartedAt:  started.Format("2006-01-02 15:04:05"),
+	}
+	if _, err := reg.CreateBackupRun(ctx, run); err != nil {
+		logErr("record backup run for %s: %v", job.DBName, err)
 	}
 }
 

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BackupDB — Nhật ký</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Nhật ký backup</h1>
+      <p class="subtitle">{{len .Runs}} lần chạy gần nhất (tối đa {{.Limit}}) — do consumer ghi lại sau mỗi job, thành công lẫn lỗi.</p>
+    </div>
+    <div class="page-head-actions">
+      <button type="button" class="danger" data-action="/logs/clear" data-ajax="reload" data-confirm="Xoá toàn bộ nhật ký? Không thể hoàn tác.">{{template "icon-trash"}} Xoá toàn bộ nhật ký</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+  <thead><tr><th>Thời gian</th><th>Database</th><th>Driver</th><th>Trạng thái</th><th>Thời lượng</th><th>Chi tiết</th></tr></thead>
+  <tbody>
+  {{range .Runs}}
+  <tr>
+    <td>{{.StartedAt}}</td>
+    <td>{{.DBName}}</td>
+    <td><span class="tag">{{.Driver}}</span></td>
+    <td>{{if eq .Status "success"}}<span class="badge on">Thành công</span>{{else}}<span class="badge off">Lỗi</span>{{end}}</td>
+    <td>{{.Duration}}</td>
+    <td>{{if .Message}}{{.Message}}{{else}}<span class="hint">—</span>{{end}}</td>
+  </tr>
+  {{else}}
+  <tr><td class="empty-state" colspan="6">Chưa có nhật ký nào — sẽ xuất hiện sau lần backup đầu tiên.</td></tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
+
+  <a class="back-link" href="/">{{template "icon-back"}} Quay lại danh sách database</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

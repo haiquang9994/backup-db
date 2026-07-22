@@ -732,10 +732,9 @@ func (r *Registry) DeleteStorageTarget(ctx context.Context, id int64) error {
 }
 
 // NotifyChannel is one configured notification destination (a Telegram
-// bot/chat today) — same kind/label/config shape as StorageTarget.
-// NotifyOnSuccess/NotifyOnError let a channel be error-alerts-only,
-// success-log-only, or both; a database picks any number of channels via
-// database_notify_channels.
+// bot/chat today) — same kind/label/config shape as StorageTarget. A channel
+// gets every event (success and failure) for every database it's assigned
+// to via database_notify_channels; a database picks any number of channels.
 type NotifyChannel struct {
 	ID        int64
 	Kind      string
@@ -853,4 +852,65 @@ func (r *Registry) SetDatabaseNotifyChannels(ctx context.Context, databaseID int
 		}
 	}
 	return nil
+}
+
+// BackupRun is one finished consumer job, success or error, shown on the
+// admin "Nhật ký" page. DatabaseID is 0 if the database has since been
+// deleted or renamed; DBName/Driver are captured as of run time so the log
+// stays meaningful either way.
+type BackupRun struct {
+	ID         int64
+	DatabaseID int64
+	DBName     string
+	Driver     string
+	Status     string // "success" | "error"
+	Message    string
+	DurationMS int64
+	StartedAt  string
+	CreatedAt  string
+}
+
+// CreateBackupRun records one finished job. Called by the consumer after
+// every job, success or failure.
+func (r *Registry) CreateBackupRun(ctx context.Context, run BackupRun) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		`INSERT INTO backup_runs (database_id, dbname, driver, status, message, duration_ms, started_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		run.DatabaseID, run.DBName, run.Driver, run.Status, run.Message, run.DurationMS, run.StartedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ListBackupRuns returns the most recent runs, newest first, capped at
+// limit — the log is meant for "what happened recently", not a full audit
+// trail with pagination.
+func (r *Registry) ListBackupRuns(ctx context.Context, limit int) ([]BackupRun, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, database_id, dbname, driver, status, message, duration_ms, started_at, created_at FROM backup_runs ORDER BY id DESC LIMIT ?",
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []BackupRun
+	for rows.Next() {
+		var run BackupRun
+		if err := rows.Scan(&run.ID, &run.DatabaseID, &run.DBName, &run.Driver, &run.Status, &run.Message, &run.DurationMS, &run.StartedAt, &run.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
+// DeleteAllBackupRuns clears the entire log — backs the admin UI's "Xóa
+// toàn bộ nhật ký" button.
+func (r *Registry) DeleteAllBackupRuns(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM backup_runs")
+	return err
 }

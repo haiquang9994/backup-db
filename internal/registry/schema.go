@@ -99,4 +99,24 @@ CREATE TABLE IF NOT EXISTS database_notify_channels (
 );
 
 CREATE INDEX IF NOT EXISTS idx_database_notify_channels_channel_id ON database_notify_channels(notify_channel_id);
+
+-- backup_runs is a history log of every job the consumer has finished
+-- processing (success or error), shown on the admin "Nhật ký" page in place
+-- of reading container stdout logs directly. database_id has no FK (same
+-- reasoning as databases.storage_target_id) since a run must stay visible
+-- even after its database is renamed or deleted; dbname/driver are captured
+-- as of run time for that reason.
+CREATE TABLE IF NOT EXISTS backup_runs (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	database_id INTEGER NOT NULL DEFAULT 0,
+	dbname      TEXT NOT NULL,
+	driver      TEXT NOT NULL,
+	status      TEXT NOT NULL,               -- 'success' | 'error'
+	message     TEXT NOT NULL DEFAULT '',
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	started_at  TEXT NOT NULL,
+	created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_backup_runs_id_desc ON backup_runs(id DESC);
 `

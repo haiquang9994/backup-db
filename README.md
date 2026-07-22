@@ -9,6 +9,7 @@ Tính năng chính:
 - **Lịch backup lưu trong SQLite**, mỗi database có thể có nhiều giờ backup/ngày, quản lý ngay trên trang Sửa database — không dùng crontab. Ngoài lịch riêng từng database còn có **lịch chung** (trang "Lịch chung"): 1 nhóm database dùng chung bất kỳ số khung giờ nào, không cần lặp lại cấu hình cho từng database. Giờ trong mọi lịch diễn giải theo 1 timezone chung cho cả deployment (`SCHEDULER_TIMEZONE`, mặc định `Asia/Ho_Chi_Minh`).
 - **Nhiều nơi lưu trữ cùng lúc**: có thể kết nối nhiều tài khoản Google Drive và nhiều cấu hình S3 (AWS S3, MinIO, R2, Spaces...), mỗi database tự chọn upload vào đâu, quản lý ở trang "Nơi lưu trữ" trong admin UI.
 - **Nhiều kênh thông báo**: kênh Telegram (gửi thẳng qua Bot API, không qua relay trung gian) hôm nay, thêm loại kênh khác sau này — mỗi database tự chọn bất kỳ số kênh nào, quản lý ở trang "Thông báo" trong admin UI.
+- **Nhật ký backup** ngay trên web (trang "Nhật ký"): mỗi job `consumer` xử lý xong (thành công hoặc lỗi) đều được ghi vào SQLite — không cần `docker logs`. Xem được database, driver, thời lượng, thông báo lỗi; có nút xoá toàn bộ khi muốn dọn.
 - Worker (`consumer`) chạy vô hạn, không tự thoát sau N job; cũng không cần chờ có nơi lưu trữ nào được cấu hình mới chạy được — job nào chưa có đích hợp lệ thì chỉ job đó báo lỗi qua các kênh thông báo đã gán, các job khác vẫn xử lý bình thường.
 
 ## Kiến trúc
@@ -17,7 +18,7 @@ Tính năng chính:
 redis      — hàng đợi job (RPUSH/BLPOP)
 admin      — web UI: quản lý database, lịch backup (riêng + chung), nơi lưu trữ, kênh thông báo (Basic Auth)
 scheduler  — mỗi 30s kiểm tra SQLite (lịch riêng + lịch chung), đến giờ thì đẩy job vào Redis
-consumer   — lấy job từ Redis, dump (mysqldump/pg_dump/mongodump), gzip, upload, gửi thông báo qua các kênh đã gán cho database đó
+consumer   — lấy job từ Redis, dump (mysqldump/pg_dump/mongodump), gzip, upload, ghi kết quả vào nhật ký (SQLite) và gửi thông báo qua các kênh đã gán cho database đó
 ```
 
 `admin`, `scheduler`, `consumer` dùng chung 1 file SQLite (volume `sqlite-data`, chế độ WAL để đọc/ghi đồng thời an toàn). `consumer` cần cùng Docker network với các container database đích để phân giải hostname (network `dbnet`).
