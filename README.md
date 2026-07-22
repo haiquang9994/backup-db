@@ -86,6 +86,22 @@ Nếu agent chạy trong Docker (khuyến nghị, dùng chung image `backupdb:la
 
 ## Giới hạn đã biết / cần lưu ý khi vận hành thật
 
-- Mật khẩu database, secret key S3, thông tin kênh thông báo (vd bot token Telegram), và token của agent từ xa đều lưu dạng plaintext trong SQLite (tương đương mức bảo mật của `databases.txt` cũ) — không expose port `admin` ra Internet công khai, chỉ dùng trong mạng nội bộ/VPN dù đã có Basic Auth.
+- Mật khẩu database, secret key S3, thông tin kênh thông báo (vd bot token Telegram), và token của agent từ xa đều lưu dạng plaintext trong SQLite (tương đương mức bảo mật của `databases.txt` cũ) — không expose port `admin` ra Internet công khai, chỉ dùng trong mạng nội bộ/VPN dù đã có Basic Auth. Cách đơn giản nhất để truy cập từ máy cá nhân: SSH tunnel thay vì mở port ra ngoài, ví dụ 1 script `backup-tunnel.sh`:
+  ```bash
+  #!/usr/bin/env bash
+
+  SERVER="user@server"
+  REMOTE_PORT=8080
+  LOCAL_PORT=8080
+
+  echo "Creating SSH tunnel..."
+  echo "Localhost:$LOCAL_PORT -> Server:$REMOTE_PORT"
+  echo "Press Ctrl+C to stop."
+
+  ssh -N \
+      -L ${LOCAL_PORT}:localhost:${REMOTE_PORT} \
+      "${SERVER}"
+  ```
+  Chạy `./backup-tunnel.sh` rồi mở `http://localhost:8080` — `REMOTE_PORT` là `ADMIN_PORT` cấu hình trên server.
 - Chứng chỉ TLS của `agent` là tự ký (self-signed), xác thực bằng cách ghim đúng fingerprint (không qua CA công cộng) — nếu 1 agent bị đổi cert (vd cài lại server, xoá nhầm file cert/key) thì phải cập nhật lại fingerprint mới trong admin UI, các job cũ sẽ báo lỗi "certificate fingerprint mismatch" cho tới lúc đó thay vì âm thầm tin tưởng 1 cert lạ.
 - Schema SQLite hiện tại **không có migration tự động** giữa các phiên bản — nếu cấu trúc bảng đổi trong tương lai, xoá volume `sqlite-data` và cấu hình lại từ đầu (hoặc tự viết script migrate) thay vì kỳ vọng nâng cấp tại chỗ.
