@@ -62,9 +62,7 @@ a { color: var(--accent); }
 }
 
 .topbar-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0.9rem 1.25rem;
+  padding: 0.9rem 1.5rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -103,9 +101,7 @@ a { color: var(--accent); }
 /* ---- page shell ------------------------------------------------------ */
 
 main {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 2rem 1.25rem 4rem;
+  padding: 2rem 1.5rem 4rem;
 }
 
 .page-head {
@@ -132,7 +128,7 @@ h2 {
 
 .subtitle { color: var(--muted); font-size: 0.92rem; margin: 0; }
 
-.page-head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.page-head-actions { display: flex; gap: 0.5rem; flex-wrap: nowrap; }
 
 /* ---- card -------------------------------------------------------- */
 
@@ -179,6 +175,8 @@ td {
   vertical-align: middle;
 }
 
+td.nowrap { white-space: nowrap; }
+
 tbody tr:last-child td { border-bottom: none; }
 tbody tr { transition: background 0.12s ease; }
 tbody tr:hover { background: var(--accent-soft); }
@@ -190,6 +188,7 @@ td.empty-state {
 }
 
 .actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: nowrap; }
+.actions button, .actions .button { white-space: nowrap; flex-shrink: 0; }
 
 /* ---- badges ---------------------------------------------------------- */
 
@@ -223,7 +222,14 @@ td.empty-state {
   font-weight: 600;
   background: var(--accent-soft);
   color: var(--accent);
+  white-space: nowrap;
 }
+
+.tag.neutral { background: var(--border); color: var(--muted); }
+
+td .hint { white-space: nowrap; }
+
+.tag-list { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 
 /* ---- buttons --------------------------------------------------------- */
 

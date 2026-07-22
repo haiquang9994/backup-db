@@ -76,6 +76,22 @@ function setLabel(btn, text) {
   labelEl(btn).textContent = text;
 }
 
+// Highlight the topbar nav link for the current page. Sub-pages (edit
+// forms, "new" pages, a database's file list, ...) don't have their own nav
+// entry — matching by href prefix instead of exact path covers those too,
+// falling back to "/" (Databases) for anything no other link's prefix
+// claims, since every uncovered route today is database-related.
+const navLinks = document.querySelectorAll(".topbar nav a");
+if (navLinks.length) {
+  const path = location.pathname;
+  let active = document.querySelector('.topbar nav a[href="/"]');
+  navLinks.forEach((a) => {
+    const href = a.getAttribute("href");
+    if (href !== "/" && path.startsWith(href)) active = a;
+  });
+  active?.classList.add("active");
+}
+
 // Auth DB only applies to mongo — the form ships it pre-hidden/shown for the
 // current driver (server-rendered, avoids a flash of the wrong state), this
 // just keeps it in sync as the user changes the driver dropdown.

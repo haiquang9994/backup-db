@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BackupDB — Danh sách</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -22,7 +23,7 @@
   <div class="table-wrap">
   <table>
   <thead>
-  <tr><th>Tên</th><th>Driver</th><th>Host</th><th>Port</th><th>User</th><th>Trạng thái</th><th>Hành động</th></tr>
+  <tr><th>Tên</th><th>Driver</th><th>Host</th><th>Port</th><th>User</th><th>Agent</th><th>Trạng thái</th><th>Hành động</th></tr>
   </thead>
   <tbody>
   {{range .}}
@@ -32,6 +33,7 @@
     <td>{{.Host}}</td>
     <td>{{.Port}}</td>
     <td>{{.Username}}</td>
+    <td>{{if .AgentID}}<span class="tag">{{.AgentLabel}}</span>{{else}}<span class="tag neutral">Server này</span>{{end}}</td>
     <td>{{if .Enabled}}<span class="badge on">Bật</span>{{else}}<span class="badge off">Tắt</span>{{end}}</td>
     <td class="actions">
       <button type="button" data-action="/backup-now/{{.ID}}" data-ajax="flash" data-confirm="Backup {{.Name}} ngay bây giờ?">{{template "icon-play"}} <span class="label">Backup ngay</span></button>
@@ -42,7 +44,7 @@
     </td>
   </tr>
   {{else}}
-  <tr><td class="empty-state" colspan="7">Chưa có database nào — bấm "Thêm database" để bắt đầu.</td></tr>
+  <tr><td class="empty-state" colspan="8">Chưa có database nào — bấm "Thêm database" để bắt đầu.</td></tr>
   {{end}}
   </tbody>
   </table>

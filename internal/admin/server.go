@@ -155,13 +155,43 @@ type scheduleTimesCard struct {
 	DeletePrefix string
 }
 
+// listDatabaseView adds the assigned remote agent's label (if any) to a
+// Database for display in the "Agent" column — computed here rather than
+// polluting the DB-level Database struct, same reasoning as logRunView.
+type listDatabaseView struct {
+	registry.Database
+	AgentLabel string
+}
+
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	dbs, err := s.reg.List(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := tmpl.ExecuteTemplate(w, "list.html", dbs); err != nil {
+	agents, err := s.reg.ListRemoteAgents(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	agentLabels := make(map[int64]string, len(agents))
+	for _, a := range agents {
+		agentLabels[a.ID] = a.Label
+	}
+
+	views := make([]listDatabaseView, len(dbs))
+	for i, d := range dbs {
+		label := "Server này"
+		if d.AgentID != 0 {
+			label = agentLabels[d.AgentID]
+			if label == "" {
+				label = "Agent đã xoá"
+			}
+		}
+		views[i] = listDatabaseView{Database: d, AgentLabel: label}
+	}
+
+	if err := tmpl.ExecuteTemplate(w, "list.html", views); err != nil {
 		log.Println("render list:", err)
 	}
 }
@@ -676,15 +706,45 @@ type s3Config struct {
 	Prefix    string `json:"prefix"`
 }
 
+// storageTargetView adds a human-formatted CreatedAt to a StorageTarget for
+// display — SQLite's CURRENT_TIMESTAMP columns scan back as RFC3339
+// ("2026-07-22T15:53:04Z"), not the "YYYY-MM-DD HH:MM:SS" layout the rest
+// of the admin UI uses (backup_runs.started_at is formatted explicitly at
+// insert time — see recordBackupRun in cmd/backupdb/consumer.go).
+type storageTargetView struct {
+	registry.StorageTarget
+	CreatedAtDisplay string
+}
+
 func (s *Server) handleStorageList(w http.ResponseWriter, r *http.Request) {
 	targets, err := s.reg.ListStorageTargets(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := tmpl.ExecuteTemplate(w, "storage.html", struct{ Targets []registry.StorageTarget }{targets}); err != nil {
+	views := make([]storageTargetView, len(targets))
+	for i, t := range targets {
+		views[i] = storageTargetView{StorageTarget: t, CreatedAtDisplay: s.formatTimestamp(t.CreatedAt)}
+	}
+	if err := tmpl.ExecuteTemplate(w, "storage.html", struct{ Targets []storageTargetView }{views}); err != nil {
 		log.Println("render storage:", err)
 	}
+}
+
+// formatTimestamp reformats a SQLite DATETIME string (RFC3339, as returned
+// for CURRENT_TIMESTAMP columns) into "YYYY-MM-DD HH:MM:SS" in the
+// deployment's scheduler timezone, matching how backup_runs.started_at
+// already displays. Falls back to the raw string if it doesn't parse.
+func (s *Server) formatTimestamp(raw string) string {
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return raw
+	}
+	loc, err := time.LoadLocation(s.schedulerTimezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("2006-01-02 15:04:05")
 }
 
 // googleFormData backs storage_google.html, used for both the "connect new
@@ -1200,10 +1260,13 @@ func (s *Server) handleLogsClear(w http.ResponseWriter, r *http.Request) {
 // "recent, not a full audit trail" reasoning as logListLimit.
 const fileListLimit = 200
 
-// backupFileView adds a human-readable size to a BackupFile for display.
+// backupFileView adds a human-readable size and formatted timestamp to a
+// BackupFile for display — see storageTargetView above for why CreatedAt
+// needs reformatting.
 type backupFileView struct {
 	registry.BackupFile
-	SizeDisplay string
+	SizeDisplay      string
+	CreatedAtDisplay string
 }
 
 func (s *Server) handleDatabaseFiles(w http.ResponseWriter, r *http.Request) {
@@ -1228,7 +1291,7 @@ func (s *Server) handleDatabaseFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]backupFileView, len(files))
 	for i, f := range files {
-		views[i] = backupFileView{BackupFile: f, SizeDisplay: humanSize(f.SizeBytes)}
+		views[i] = backupFileView{BackupFile: f, SizeDisplay: humanSize(f.SizeBytes), CreatedAtDisplay: s.formatTimestamp(f.CreatedAt)}
 	}
 	data := struct {
 		Database registry.Database

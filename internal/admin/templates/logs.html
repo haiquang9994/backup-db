@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BackupDB — Nhật ký</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -25,7 +26,7 @@
   <tbody>
   {{range .Runs}}
   <tr>
-    <td>{{.StartedAt}}</td>
+    <td class="nowrap">{{.StartedAt}}</td>
     <td>{{.DBName}}</td>
     <td><span class="tag">{{.Driver}}</span></td>
     <td>{{if eq .Status "success"}}<span class="badge on">Thành công</span>{{else}}<span class="badge off">Lỗi</span>{{end}}</td>

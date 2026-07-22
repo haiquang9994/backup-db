@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BackupDB — Lịch chung</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -26,10 +27,14 @@
   {{range .}}
   <tr>
     <td>
-      {{range .Times}}<span class="tag" title="{{if .LastRunDate}}Chạy gần nhất {{.LastRunDate}}{{else}}Chưa chạy{{end}}">{{template "icon-clock"}} {{.TimeOfDay}}</span> {{else}}<span class="hint">Chưa có khung giờ</span>{{end}}
+      <div class="tag-list">
+      {{range .Times}}<span class="tag" title="{{if .LastRunDate}}Chạy gần nhất {{.LastRunDate}}{{else}}Chưa chạy{{end}}">{{template "icon-clock"}} {{.TimeOfDay}}</span>{{else}}<span class="hint">Chưa có khung giờ</span>{{end}}
+      </div>
     </td>
     <td>
-      {{range .Databases}}<span class="tag">{{.Name}}</span> {{else}}<span class="hint">Chưa chọn database</span>{{end}}
+      <div class="tag-list">
+      {{range .Databases}}<span class="tag">{{.Name}}</span>{{else}}<span class="hint">Chưa chọn database</span>{{end}}
+      </div>
     </td>
     <td>{{if .Enabled}}<span class="badge on">Bật</span>{{else}}<span class="badge off">Tắt</span>{{end}}</td>
     <td class="actions">

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BackupDB — Nơi lưu trữ</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -32,7 +33,7 @@
       {{else}}{{.Kind}}{{end}}
     </td>
     <td>{{.Label}}</td>
-    <td>{{.CreatedAt}}</td>
+    <td class="nowrap">{{.CreatedAtDisplay}}</td>
     <td class="actions">
       {{if eq .Kind "gdrive"}}
       <a class="button" href="/storage/google/{{.ID}}/edit">{{template "icon-pencil"}} Sửa</a>
