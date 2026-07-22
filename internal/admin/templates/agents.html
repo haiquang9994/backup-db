@@ -29,6 +29,7 @@
     <td>{{.Label}}</td>
     <td>{{.Endpoint}}</td>
     <td class="actions">
+      <button type="button" data-action="/agents/{{.ID}}/check" data-ajax="check-connection">{{template "icon-signal"}} <span class="label">Kiểm tra kết nối</span></button>
       <a class="button" href="/agents/{{.ID}}/edit">{{template "icon-pencil"}} Sửa</a>
       <button type="button" class="danger" data-action="/agents/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá agent {{.Label}}? Database đang gán agent này sẽ chạy backup lại trên server này.">{{template "icon-trash"}} Xoá</button>
     </td>

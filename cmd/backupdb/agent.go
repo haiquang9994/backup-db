@@ -61,6 +61,7 @@ func runAgent(args []string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /run", store.handleRun)
 	mux.HandleFunc("GET /run/{id}", store.handleStatus)
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	server := &http.Server{
 		Addr:      ":" + cfg.AgentPort,

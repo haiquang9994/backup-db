@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"backupdb/internal/agentproto"
 	"backupdb/internal/config"
 	"backupdb/internal/queue"
 	"backupdb/internal/registry"
@@ -105,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /agents/{id}/edit", s.handleAgentEditForm)
 	mux.HandleFunc("POST /agents/{id}", s.handleAgentUpdate)
 	mux.HandleFunc("POST /agents/{id}/delete", s.handleAgentDelete)
+	mux.HandleFunc("POST /agents/{id}/check", s.handleAgentCheck)
 	mux.HandleFunc("GET /databases/{id}/files", s.handleDatabaseFiles)
 	mux.HandleFunc("GET /databases/{id}/files/{fileID}/download", s.handleDatabaseFileDownload)
 
@@ -1527,4 +1529,40 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/agents", http.StatusSeeOther)
+}
+
+// agentCheckTimeout bounds how long the "Kiểm tra kết nối" button waits —
+// generous enough for a slow public-internet round trip, short enough that
+// a dead agent doesn't leave the button hanging.
+const agentCheckTimeout = 10 * time.Second
+
+// handleAgentCheck backs the "Kiểm tra kết nối" button: dials out to the
+// agent's /health (TLS-pinned, Bearer-authenticated, same as a real job
+// dispatch) and reports whether it's reachable. A non-2xx response here
+// means the connection, cert fingerprint, or token is wrong — the error
+// message is specific enough to show the user as-is.
+func (s *Server) handleAgentCheck(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	agent, err := s.reg.GetRemoteAgent(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if agent == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), agentCheckTimeout)
+	defer cancel()
+	client := agentproto.NewClient(agent.Endpoint, agent.Token, agent.CertFingerprint)
+	if err := client.Health(ctx); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

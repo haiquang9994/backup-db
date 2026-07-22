@@ -139,6 +139,15 @@ func (c *Client) Run(ctx context.Context, req RunRequest) (string, error) {
 	return accepted.JobID, nil
 }
 
+// Health checks that the agent is reachable, its TLS certificate still
+// matches the pinned fingerprint, and the configured token is accepted —
+// backs the admin UI's "Kiểm tra kết nối" button. A nil error means all
+// three checked out; any failure (network, fingerprint mismatch, 401, ...)
+// comes back as a non-nil error with a message fit to show the user as-is.
+func (c *Client) Health(ctx context.Context) error {
+	return c.do(ctx, http.MethodGet, "/health", nil, nil)
+}
+
 // Status polls one job's current state.
 func (c *Client) Status(ctx context.Context, jobID string) (RunStatus, error) {
 	var status RunStatus

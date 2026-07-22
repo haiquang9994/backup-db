@@ -52,9 +52,9 @@ function applyAction(btn) {
     return;
   }
 
-  if (action === "flash") {
+  if (action === "flash" || action === "check-connection") {
     const original = labelEl(btn).textContent;
-    setLabel(btn, "Đã đẩy ✓");
+    setLabel(btn, action === "flash" ? "Đã đẩy ✓" : "Kết nối OK ✓");
     setTimeout(() => {
       setLabel(btn, original);
       btn.disabled = false;
