@@ -12,15 +12,12 @@
   <div class="page-head">
     <div>
       <h1>{{if .Editing}}Sửa lịch chung{{else}}Thêm lịch chung{{end}}</h1>
-      <p class="subtitle">Lịch này tự đẩy job backup cho tất cả database được chọn bên dưới, vào đúng giờ đặt (giờ Việt Nam).</p>
+      <p class="subtitle">Lịch này tự đẩy job backup cho tất cả database được chọn bên dưới, vào mỗi khung giờ đặt ở khối bên dưới (giờ Việt Nam).</p>
     </div>
   </div>
 
   <div class="card">
   <form method="post" action="{{.Action}}" class="form">
-    <label>Giờ backup
-      <input type="time" name="time_of_day" value="{{.Schedule.TimeOfDay}}" required>
-    </label>
     <label>Áp dụng cho database
       <div class="checkbox-group">
         {{$selected := .Selected}}
@@ -43,6 +40,39 @@
     </div>
   </form>
   </div>
+
+  {{if .Editing}}
+  <div class="card">
+  <h2>Khung giờ backup (giờ Việt Nam)</h2>
+  <p class="hint">Có thể thêm nhiều khung giờ trong ngày — mỗi giờ tự đẩy 1 job backup riêng cho tất cả database trong nhóm này.</p>
+  <div class="table-wrap">
+  <table>
+  <thead><tr><th>Giờ</th><th>Chạy gần nhất</th><th></th></tr></thead>
+  <tbody>
+  {{range .Schedule.Times}}
+  <tr>
+    <td>{{template "icon-clock"}} {{.TimeOfDay}}</td>
+    <td>{{if .LastRunDate}}{{.LastRunDate}}{{else}}<span class="hint">chưa chạy</span>{{end}}</td>
+    <td>
+      <button type="button" class="danger" data-action="/shared-schedule-times/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá khung giờ {{.TimeOfDay}}?">{{template "icon-trash"}} Xoá</button>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td class="empty-state" colspan="3">Chưa có khung giờ nào — lịch chung sẽ không tự động chạy.</td></tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
+  <form method="post" action="/shared-schedules/{{.Schedule.ID}}/times" class="form form-inline">
+    <label>Thêm khung giờ
+      <input type="time" name="time_of_day" required>
+    </label>
+    <button type="submit">{{template "icon-plus"}} Thêm</button>
+  </form>
+  </div>
+  {{else}}
+  <p class="hint">Lưu lịch chung trước, sau đó quay lại trang Sửa để thêm khung giờ.</p>
+  {{end}}
 
   <a class="back-link" href="/shared-schedules">{{template "icon-back"}} Quay lại Lịch chung</a>
 </main>

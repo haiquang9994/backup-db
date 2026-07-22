@@ -46,16 +46,16 @@ CREATE TABLE IF NOT EXISTS schedules (
 
 CREATE INDEX IF NOT EXISTS idx_schedules_database_id ON schedules(database_id);
 
--- shared_schedules is the same "fire at HH:MM, once per day" idea as
--- schedules, but not owned by a single database — shared_schedule_databases
--- is a many-to-many join so one shared schedule can back up any number of
--- databases, and a database can be covered by any number of shared
--- schedules on top of its own per-database ones.
+-- shared_schedules groups any number of databases under one enabled switch
+-- — shared_schedule_databases is a many-to-many join so one shared schedule
+-- can back up any number of databases, and a database can be covered by any
+-- number of shared schedules on top of its own per-database ones. The
+-- actual "fire at HH:MM, once per day" triggers live in shared_schedule_times
+-- below, any number of them per shared schedule, same idea as schedules
+-- above but decoupled from a single time per group.
 CREATE TABLE IF NOT EXISTS shared_schedules (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
-	time_of_day   TEXT NOT NULL,
 	enabled       INTEGER NOT NULL DEFAULT 1,
-	last_run_date TEXT NOT NULL DEFAULT '',
 	created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -66,4 +66,14 @@ CREATE TABLE IF NOT EXISTS shared_schedule_databases (
 );
 
 CREATE INDEX IF NOT EXISTS idx_shared_schedule_databases_database_id ON shared_schedule_databases(database_id);
+
+CREATE TABLE IF NOT EXISTS shared_schedule_times (
+	id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+	shared_schedule_id INTEGER NOT NULL REFERENCES shared_schedules(id) ON DELETE CASCADE,
+	time_of_day        TEXT NOT NULL,
+	last_run_date      TEXT NOT NULL DEFAULT '',
+	created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_shared_schedule_times_shared_schedule_id ON shared_schedule_times(shared_schedule_id);
 `

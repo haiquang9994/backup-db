@@ -71,6 +71,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /shared-schedules/{id}", s.handleSharedScheduleUpdate)
 	mux.HandleFunc("POST /shared-schedules/{id}/toggle", s.handleSharedScheduleToggle)
 	mux.HandleFunc("POST /shared-schedules/{id}/delete", s.handleSharedScheduleDelete)
+	mux.HandleFunc("POST /shared-schedules/{id}/times", s.handleAddSharedScheduleTime)
+	mux.HandleFunc("POST /shared-schedule-times/{id}/delete", s.handleDeleteSharedScheduleTime)
 	mux.HandleFunc("GET /storage", s.handleStorageList)
 	mux.HandleFunc("GET /storage/google/new", s.handleStorageGoogleNewForm)
 	mux.HandleFunc("POST /storage/google", s.handleStorageAddGoogle)
@@ -253,7 +255,7 @@ func (s *Server) renderSharedScheduleForm(w http.ResponseWriter, data sharedSche
 
 // renderSharedScheduleError re-fetches the database list (needed to render
 // the checkbox group again) and re-renders the form with an error, keeping
-// whatever the user had entered/selected.
+// whatever the user had checked.
 func (s *Server) renderSharedScheduleError(w http.ResponseWriter, r *http.Request, editing bool, action string, sched registry.SharedSchedule, databaseIDs []int64, errMsg string) {
 	dbs, err := s.reg.List(r.Context())
 	if err != nil {
@@ -315,13 +317,12 @@ func (s *Server) handleSharedScheduleEditForm(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// parseSharedScheduleForm reads the time and the set of checked database
-// checkboxes shared by the add and edit forms.
-func parseSharedScheduleForm(r *http.Request) (timeOfDay string, databaseIDs []int64, err error) {
+// parseSharedScheduleForm reads the set of checked database checkboxes
+// shared by the add and edit forms.
+func parseSharedScheduleForm(r *http.Request) (databaseIDs []int64, err error) {
 	if err = r.ParseForm(); err != nil {
 		return
 	}
-	timeOfDay = strings.TrimSpace(r.FormValue("time_of_day"))
 	for _, v := range r.Form["database_ids"] {
 		id, convErr := strconv.ParseInt(v, 10, 64)
 		if convErr != nil {
@@ -333,26 +334,23 @@ func parseSharedScheduleForm(r *http.Request) (timeOfDay string, databaseIDs []i
 }
 
 func (s *Server) handleSharedScheduleCreate(w http.ResponseWriter, r *http.Request) {
-	timeOfDay, databaseIDs, err := parseSharedScheduleForm(r)
+	databaseIDs, err := parseSharedScheduleForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	sched := registry.SharedSchedule{TimeOfDay: timeOfDay}
-
-	if _, err := time.Parse("15:04", timeOfDay); err != nil {
-		s.renderSharedScheduleError(w, r, false, "/shared-schedules", sched, databaseIDs, "Giờ không hợp lệ, cần dạng HH:MM")
-		return
-	}
 	if len(databaseIDs) == 0 {
-		s.renderSharedScheduleError(w, r, false, "/shared-schedules", sched, databaseIDs, "Chọn ít nhất 1 database")
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", registry.SharedSchedule{}, databaseIDs, "Chọn ít nhất 1 database")
 		return
 	}
-	if _, err := s.reg.CreateSharedSchedule(r.Context(), timeOfDay, databaseIDs); err != nil {
-		s.renderSharedScheduleError(w, r, false, "/shared-schedules", sched, databaseIDs, err.Error())
+	id, err := s.reg.CreateSharedSchedule(r.Context(), databaseIDs)
+	if err != nil {
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", registry.SharedSchedule{}, databaseIDs, err.Error())
 		return
 	}
-	http.Redirect(w, r, "/shared-schedules", http.StatusSeeOther)
+	// Straight to the edit page — that's where khung giờ backup get added,
+	// same flow as saving a new database first, then adding its schedules.
+	http.Redirect(w, r, fmt.Sprintf("/shared-schedules/%d/edit", id), http.StatusSeeOther)
 }
 
 func (s *Server) handleSharedScheduleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -371,27 +369,68 @@ func (s *Server) handleSharedScheduleUpdate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	timeOfDay, databaseIDs, err := parseSharedScheduleForm(r)
+	databaseIDs, err := parseSharedScheduleForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	action := fmt.Sprintf("/shared-schedules/%d", id)
-	sched := registry.SharedSchedule{ID: id, TimeOfDay: timeOfDay, Enabled: existing.Enabled, LastRunDate: existing.LastRunDate, CreatedAt: existing.CreatedAt}
 
-	if _, err := time.Parse("15:04", timeOfDay); err != nil {
-		s.renderSharedScheduleError(w, r, true, action, sched, databaseIDs, "Giờ không hợp lệ, cần dạng HH:MM")
-		return
-	}
 	if len(databaseIDs) == 0 {
+		sched := *existing
 		s.renderSharedScheduleError(w, r, true, action, sched, databaseIDs, "Chọn ít nhất 1 database")
 		return
 	}
-	if err := s.reg.UpdateSharedSchedule(r.Context(), id, timeOfDay, databaseIDs); err != nil {
+	if err := s.reg.UpdateSharedSchedule(r.Context(), id, databaseIDs); err != nil {
+		sched := *existing
 		s.renderSharedScheduleError(w, r, true, action, sched, databaseIDs, err.Error())
 		return
 	}
 	http.Redirect(w, r, "/shared-schedules", http.StatusSeeOther)
+}
+
+func (s *Server) handleAddSharedScheduleTime(w http.ResponseWriter, r *http.Request) {
+	sharedScheduleID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	timeOfDay := r.FormValue("time_of_day")
+	if _, err := time.Parse("15:04", timeOfDay); err != nil {
+		http.Error(w, "invalid time, expected HH:MM", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.reg.CreateSharedScheduleTime(r.Context(), sharedScheduleID, timeOfDay); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/shared-schedules/%d/edit", sharedScheduleID), http.StatusSeeOther)
+}
+
+func (s *Server) handleDeleteSharedScheduleTime(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	t, err := s.reg.GetSharedScheduleTime(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if t == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.reg.DeleteSharedScheduleTime(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/shared-schedules/%d/edit", t.SharedScheduleID), http.StatusSeeOther)
 }
 
 func (s *Server) handleSharedScheduleToggle(w http.ResponseWriter, r *http.Request) {

@@ -21,24 +21,25 @@
 
   <div class="table-wrap">
   <table>
-  <thead><tr><th>Giờ</th><th>Áp dụng cho</th><th>Chạy gần nhất</th><th>Trạng thái</th><th>Hành động</th></tr></thead>
+  <thead><tr><th>Khung giờ</th><th>Áp dụng cho</th><th>Trạng thái</th><th>Hành động</th></tr></thead>
   <tbody>
   {{range .}}
   <tr>
-    <td>{{template "icon-clock"}} {{.TimeOfDay}}</td>
+    <td>
+      {{range .Times}}<span class="tag" title="{{if .LastRunDate}}Chạy gần nhất {{.LastRunDate}}{{else}}Chưa chạy{{end}}">{{template "icon-clock"}} {{.TimeOfDay}}</span> {{else}}<span class="hint">Chưa có khung giờ</span>{{end}}
+    </td>
     <td>
       {{range .Databases}}<span class="tag">{{.Name}}</span> {{else}}<span class="hint">Chưa chọn database</span>{{end}}
     </td>
-    <td>{{if .LastRunDate}}{{.LastRunDate}}{{else}}<span class="hint">chưa chạy</span>{{end}}</td>
     <td>{{if .Enabled}}<span class="badge on">Bật</span>{{else}}<span class="badge off">Tắt</span>{{end}}</td>
     <td class="actions">
       <button type="button" data-action="/shared-schedules/{{.ID}}/toggle" data-ajax="toggle-enabled">{{template "icon-power"}} <span class="label">{{if .Enabled}}Tắt{{else}}Bật{{end}}</span></button>
       <a class="button" href="/shared-schedules/{{.ID}}/edit">{{template "icon-pencil"}} Sửa</a>
-      <button type="button" class="danger" data-action="/shared-schedules/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá lịch {{.TimeOfDay}}?">{{template "icon-trash"}} Xoá</button>
+      <button type="button" class="danger" data-action="/shared-schedules/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá lịch chung này?">{{template "icon-trash"}} Xoá</button>
     </td>
   </tr>
   {{else}}
-  <tr><td class="empty-state" colspan="5">Chưa có lịch chung nào — bấm "Thêm lịch chung" để bắt đầu.</td></tr>
+  <tr><td class="empty-state" colspan="4">Chưa có lịch chung nào — bấm "Thêm lịch chung" để bắt đầu.</td></tr>
   {{end}}
   </tbody>
   </table>

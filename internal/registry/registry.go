@@ -62,8 +62,66 @@ func Open(path string) (*Registry, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrateSharedScheduleTimes(db); err != nil {
+		return nil, fmt.Errorf("migrate shared schedule times: %w", err)
+	}
 
 	return &Registry{db: db}, nil
+}
+
+// migrateSharedScheduleTimes is a one-time, idempotent migration for
+// installs that still have the old shared_schedules shape (one row = one
+// time_of_day). CREATE TABLE IF NOT EXISTS above never touches an existing
+// table, so on an old install shared_schedules still carries time_of_day
+// and last_run_date columns — their presence is the signal this hasn't run
+// yet. It copies each row's time into the new shared_schedule_times table,
+// then drops the now-redundant columns so ListSharedSchedules etc. (which
+// no longer select them) work against the old table shape too.
+func migrateSharedScheduleTimes(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(shared_schedules)")
+	if err != nil {
+		return fmt.Errorf("check shared_schedules columns: %w", err)
+	}
+	var hasTimeColumn bool
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "time_of_day" {
+			hasTimeColumn = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+	if !hasTimeColumn {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		INSERT INTO shared_schedule_times (shared_schedule_id, time_of_day, last_run_date)
+		SELECT id, time_of_day, last_run_date FROM shared_schedules
+	`); err != nil {
+		return fmt.Errorf("copy existing times: %w", err)
+	}
+	if _, err := tx.Exec("ALTER TABLE shared_schedules DROP COLUMN time_of_day"); err != nil {
+		return fmt.Errorf("drop time_of_day: %w", err)
+	}
+	if _, err := tx.Exec("ALTER TABLE shared_schedules DROP COLUMN last_run_date"); err != nil {
+		return fmt.Errorf("drop last_run_date: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (r *Registry) Close() error {
@@ -292,21 +350,30 @@ func (r *Registry) MarkScheduleRun(ctx context.Context, id int64, date string) e
 	return err
 }
 
-// SharedSchedule is a "fire at HH:MM, once per day" trigger, like Schedule,
-// but applied to any number of databases at once (see
-// shared_schedule_databases) instead of belonging to just one.
+// SharedSchedule groups any number of databases (see
+// shared_schedule_databases) under one enabled switch; the actual
+// "fire at HH:MM, once per day" triggers are its Times, any number of them.
 type SharedSchedule struct {
-	ID          int64
-	TimeOfDay   string
-	Enabled     bool
-	LastRunDate string
-	CreatedAt   string
-	Databases   []Database // member databases, loaded via join
+	ID        int64
+	Enabled   bool
+	CreatedAt string
+	Times     []SharedScheduleTime
+	Databases []Database // member databases, loaded via join
+}
+
+// SharedScheduleTime is one HH:MM trigger belonging to a SharedSchedule,
+// like Schedule but for a group of databases instead of just one.
+type SharedScheduleTime struct {
+	ID               int64
+	SharedScheduleID int64
+	TimeOfDay        string
+	LastRunDate      string
+	CreatedAt        string
 }
 
 func (r *Registry) ListSharedSchedules(ctx context.Context) ([]SharedSchedule, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, time_of_day, enabled, last_run_date, created_at FROM shared_schedules ORDER BY time_of_day",
+		"SELECT id, enabled, created_at FROM shared_schedules ORDER BY id",
 	)
 	if err != nil {
 		return nil, err
@@ -317,7 +384,7 @@ func (r *Registry) ListSharedSchedules(ctx context.Context) ([]SharedSchedule, e
 	for rows.Next() {
 		var s SharedSchedule
 		var enabled int
-		if err := rows.Scan(&s.ID, &s.TimeOfDay, &enabled, &s.LastRunDate, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &enabled, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		s.Enabled = enabled != 0
@@ -328,6 +395,11 @@ func (r *Registry) ListSharedSchedules(ctx context.Context) ([]SharedSchedule, e
 	}
 
 	for i := range out {
+		times, err := r.ListSharedScheduleTimes(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Times = times
 		dbs, err := r.ListDatabasesForSharedSchedule(ctx, out[i].ID)
 		if err != nil {
 			return nil, err
@@ -339,11 +411,11 @@ func (r *Registry) ListSharedSchedules(ctx context.Context) ([]SharedSchedule, e
 
 func (r *Registry) GetSharedSchedule(ctx context.Context, id int64) (*SharedSchedule, error) {
 	row := r.db.QueryRowContext(ctx,
-		"SELECT id, time_of_day, enabled, last_run_date, created_at FROM shared_schedules WHERE id = ?", id,
+		"SELECT id, enabled, created_at FROM shared_schedules WHERE id = ?", id,
 	)
 	var s SharedSchedule
 	var enabled int
-	err := row.Scan(&s.ID, &s.TimeOfDay, &enabled, &s.LastRunDate, &s.CreatedAt)
+	err := row.Scan(&s.ID, &enabled, &s.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -352,12 +424,72 @@ func (r *Registry) GetSharedSchedule(ctx context.Context, id int64) (*SharedSche
 	}
 	s.Enabled = enabled != 0
 
+	times, err := r.ListSharedScheduleTimes(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.Times = times
+
 	dbs, err := r.ListDatabasesForSharedSchedule(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	s.Databases = dbs
 	return &s, nil
+}
+
+// ListSharedScheduleTimes returns every HH:MM trigger belonging to a shared
+// schedule, ordered for stable display.
+func (r *Registry) ListSharedScheduleTimes(ctx context.Context, sharedScheduleID int64) ([]SharedScheduleTime, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, shared_schedule_id, time_of_day, last_run_date, created_at FROM shared_schedule_times WHERE shared_schedule_id = ? ORDER BY time_of_day",
+		sharedScheduleID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SharedScheduleTime
+	for rows.Next() {
+		var t SharedScheduleTime
+		if err := rows.Scan(&t.ID, &t.SharedScheduleID, &t.TimeOfDay, &t.LastRunDate, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (r *Registry) GetSharedScheduleTime(ctx context.Context, id int64) (*SharedScheduleTime, error) {
+	row := r.db.QueryRowContext(ctx,
+		"SELECT id, shared_schedule_id, time_of_day, last_run_date, created_at FROM shared_schedule_times WHERE id = ?", id,
+	)
+	var t SharedScheduleTime
+	err := row.Scan(&t.ID, &t.SharedScheduleID, &t.TimeOfDay, &t.LastRunDate, &t.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *Registry) CreateSharedScheduleTime(ctx context.Context, sharedScheduleID int64, timeOfDay string) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		"INSERT INTO shared_schedule_times (shared_schedule_id, time_of_day) VALUES (?, ?)",
+		sharedScheduleID, timeOfDay,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (r *Registry) DeleteSharedScheduleTime(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM shared_schedule_times WHERE id = ?", id)
+	return err
 }
 
 // ListDatabasesForSharedSchedule returns the databases a shared schedule
@@ -386,8 +518,8 @@ func (r *Registry) ListDatabasesForSharedSchedule(ctx context.Context, sharedSch
 	return out, rows.Err()
 }
 
-func (r *Registry) CreateSharedSchedule(ctx context.Context, timeOfDay string, databaseIDs []int64) (int64, error) {
-	res, err := r.db.ExecContext(ctx, "INSERT INTO shared_schedules (time_of_day) VALUES (?)", timeOfDay)
+func (r *Registry) CreateSharedSchedule(ctx context.Context, databaseIDs []int64) (int64, error) {
+	res, err := r.db.ExecContext(ctx, "INSERT INTO shared_schedules DEFAULT VALUES")
 	if err != nil {
 		return 0, err
 	}
@@ -401,12 +533,9 @@ func (r *Registry) CreateSharedSchedule(ctx context.Context, timeOfDay string, d
 	return id, nil
 }
 
-// UpdateSharedSchedule overwrites the time and the full set of member
-// databases (the edit form resubmits both together).
-func (r *Registry) UpdateSharedSchedule(ctx context.Context, id int64, timeOfDay string, databaseIDs []int64) error {
-	if _, err := r.db.ExecContext(ctx, "UPDATE shared_schedules SET time_of_day = ? WHERE id = ?", timeOfDay, id); err != nil {
-		return err
-	}
+// UpdateSharedSchedule overwrites the full set of member databases (times
+// are managed separately via CreateSharedScheduleTime/DeleteSharedScheduleTime).
+func (r *Registry) UpdateSharedSchedule(ctx context.Context, id int64, databaseIDs []int64) error {
 	return r.setSharedScheduleDatabases(ctx, id, databaseIDs)
 }
 
@@ -436,18 +565,19 @@ func (r *Registry) DeleteSharedSchedule(ctx context.Context, id int64) error {
 }
 
 // ListDueSharedSchedules mirrors ListDueSchedules, but returns one row per
-// (shared schedule, member database) pair — callers mark the shared
-// schedule's run once per row, which is idempotent (same date each time).
+// (shared schedule time, member database) pair — callers mark that time's
+// run once per row, which is idempotent (same date each time).
 func (r *Registry) ListDueSharedSchedules(ctx context.Context, now time.Time) ([]DueJob, error) {
 	hhmm := now.Format("15:04")
 	today := now.Format("2006-01-02")
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT ss.id, d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.enabled, d.created_at, d.updated_at
-		FROM shared_schedules ss
+		SELECT sst.id, d.id, d.name, d.driver, d.host, d.port, d.username, d.password, d.auth_db, d.storage_target_id, d.enabled, d.created_at, d.updated_at
+		FROM shared_schedule_times sst
+		JOIN shared_schedules ss ON ss.id = sst.shared_schedule_id
 		JOIN shared_schedule_databases ssd ON ssd.shared_schedule_id = ss.id
 		JOIN databases d ON d.id = ssd.database_id
-		WHERE ss.enabled = 1 AND d.enabled = 1 AND ss.time_of_day = ? AND ss.last_run_date != ?
+		WHERE ss.enabled = 1 AND d.enabled = 1 AND sst.time_of_day = ? AND sst.last_run_date != ?
 	`, hhmm, today)
 	if err != nil {
 		return nil, err
@@ -456,20 +586,20 @@ func (r *Registry) ListDueSharedSchedules(ctx context.Context, now time.Time) ([
 
 	var out []DueJob
 	for rows.Next() {
-		var scheduleID int64
+		var scheduleTimeID int64
 		var d Database
 		var enabled int
-		if err := rows.Scan(&scheduleID, &d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &enabled, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&scheduleTimeID, &d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &enabled, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		d.Enabled = enabled != 0
-		out = append(out, DueJob{ScheduleID: scheduleID, Database: d})
+		out = append(out, DueJob{ScheduleID: scheduleTimeID, Database: d})
 	}
 	return out, rows.Err()
 }
 
 func (r *Registry) MarkSharedScheduleRun(ctx context.Context, id int64, date string) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE shared_schedules SET last_run_date = ? WHERE id = ?", date, id)
+	_, err := r.db.ExecContext(ctx, "UPDATE shared_schedule_times SET last_run_date = ? WHERE id = ?", date, id)
 	return err
 }
 
