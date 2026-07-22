@@ -13,6 +13,20 @@ import (
 	"strings"
 )
 
+// Extension returns the dump file extension for driver (before the .gz
+// suffix every dump gets), shared by the consumer and the `agent`
+// subcommand so both name files the same way.
+func Extension(driver string) (string, error) {
+	switch driver {
+	case "mysql", "postgres":
+		return "sql", nil
+	case "mongo":
+		return "archive", nil
+	default:
+		return "", fmt.Errorf("unknown driver: %s", driver)
+	}
+}
+
 // Params describes how to reach a target database over TCP.
 type Params struct {
 	Host     string
@@ -23,8 +37,20 @@ type Params struct {
 }
 
 // ParseParams parses the pipe-delimited "host|port|user|pass|authDB" job
-// param string used on the Redis queue and stored in the registry.
+// param string used on the Redis queue and stored in the registry, rewriting
+// localhost/127.0.0.1 for the consumer's own Docker container (see
+// resolveHost). Callers that don't run in that same container — namely the
+// `agent` subcommand, commonly run as a bare process directly on the target
+// database's own host, where "localhost" already means exactly that host —
+// should use ParseParamsRaw instead.
 func ParseParams(raw string) Params {
+	p := ParseParamsRaw(raw)
+	p.Host = resolveHost(p.Host)
+	return p
+}
+
+// ParseParamsRaw is ParseParams without the localhost/127.0.0.1 rewrite.
+func ParseParamsRaw(raw string) Params {
 	parts := strings.Split(raw, "|")
 	get := func(i int) string {
 		if i < len(parts) {
@@ -33,7 +59,7 @@ func ParseParams(raw string) Params {
 		return ""
 	}
 	return Params{
-		Host:     resolveHost(get(0)),
+		Host:     get(0),
 		Port:     get(1),
 		Username: get(2),
 		Password: get(3),

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BackupDB — Agent từ xa</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Agent từ xa</h1>
+      <p class="subtitle">Mỗi agent là 1 tiến trình <code>backupdb agent</code> chạy trên 1 server khác, cho database chỉ server đó kết nối được. Server này chỉ gọi ra ngoài (đẩy job, rồi tự hỏi kết quả) — không cần mở port nào cả. Gán agent cho database ở trang Sửa database.</p>
+    </div>
+    <div class="page-head-actions">
+      <a class="button primary" href="/agents/new">{{template "icon-plus"}} Thêm agent</a>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+  <thead><tr><th>Tên</th><th>Endpoint</th><th></th></tr></thead>
+  <tbody>
+  {{range .Agents}}
+  <tr>
+    <td>{{.Label}}</td>
+    <td>{{.Endpoint}}</td>
+    <td class="actions">
+      <a class="button" href="/agents/{{.ID}}/edit">{{template "icon-pencil"}} Sửa</a>
+      <button type="button" class="danger" data-action="/agents/{{.ID}}/delete" data-ajax="remove-row" data-confirm="Xoá agent {{.Label}}? Database đang gán agent này sẽ chạy backup lại trên server này.">{{template "icon-trash"}} Xoá</button>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td class="empty-state" colspan="3">Chưa có agent nào.</td></tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
+
+  <a class="back-link" href="/">{{template "icon-back"}} Quay lại danh sách database</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

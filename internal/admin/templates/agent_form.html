@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BackupDB — {{if .Editing}}Sửa{{else}}Thêm{{end}} agent</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{{template "topbar"}}
+<main>
+  <div class="page-head">
+    <div>
+      <h1>{{if .Editing}}Sửa agent{{else}}Thêm agent{{end}}</h1>
+      <p class="subtitle">{{if .Editing}}{{.Agent.Label}}{{else}}Khai báo 1 tiến trình <code>backupdb agent</code> đang chạy trên server khác. Chạy lệnh đó trên server kia trước, nó sẽ in ra endpoint và cert fingerprint cần điền dưới đây.{{end}}</p>
+    </div>
+  </div>
+
+  <div class="card">
+  <form method="post" action="{{.Action}}" class="form">
+    <label>Tên gợi nhớ
+      <input type="text" name="label" value="{{.Agent.Label}}" required placeholder="VD: Server khách hàng A">
+    </label>
+    <label>Endpoint
+      <input type="text" name="endpoint" value="{{.Agent.Endpoint}}" required placeholder="https://1.2.3.4:8443">
+    </label>
+    <label>Token
+      <input type="text" name="token" value="{{.Agent.Token}}" required placeholder="Giá trị AGENT_TOKEN đã đặt trên agent đó">
+    </label>
+    <label>Cert fingerprint
+      <input type="text" name="cert_fingerprint" value="{{.Agent.CertFingerprint}}" required placeholder="In ra ở log lúc agent khởi động lần đầu">
+    </label>
+
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+    <div class="form-actions">
+      <button type="submit">{{template "icon-plus"}} Lưu</button>
+      <a class="button" href="/agents">Huỷ</a>
+    </div>
+  </form>
+  </div>
+
+  <a class="back-link" href="/agents">{{template "icon-back"}} Quay lại Agent từ xa</a>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

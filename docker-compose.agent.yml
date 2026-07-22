@@ -1,0 +1,39 @@
+# Compose file for the `agent` subcommand — run this on the *remote* server
+# that has the database, not on the main backupdb deployment. It has no
+# Redis/SQLite dependency, so it's just this one service. See README.md,
+# "Backup database trên server khác (agent)", and deploy/README.md for the
+# full setup walkthrough.
+services:
+  agent:
+    image: backupdb:latest
+    build: .
+    command: ["agent"]
+    env_file: .env
+    extra_hosts:
+      # Lets a database "host" field target this server itself (e.g. a
+      # MySQL/Postgres/Mongo installed directly here, not in a container).
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${AGENT_PORT:-8443}:${AGENT_PORT:-8443}"
+    volumes:
+      - agent-data:/app/data      # persists the self-signed TLS cert/key — see AGENT_CERT_FILE/AGENT_KEY_FILE in .env.example
+      # Only needed if a database routed through this agent uploads to
+      # Google Drive: the OAuth *app* credentials (not a specific account's
+      # token — that part travels in the job itself). Skip this mount if
+      # every database here only uses S3-compatible storage.
+      - ./google:/app/google
+    networks:
+      - dbnet
+    restart: unless-stopped
+
+networks:
+  # External network shared with the MySQL/PostgreSQL/MongoDB containers to
+  # back up, if any live in Docker on this same server. Create it once with
+  # `docker network create dbnet` and attach your database containers to it
+  # — a database installed directly on this host doesn't need this at all
+  # (use host.docker.internal or 127.0.0.1/localhost instead).
+  dbnet:
+    external: true
+
+volumes:
+  agent-data:

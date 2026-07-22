@@ -99,6 +99,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /notify-channels/{id}/delete", s.handleNotifyDelete)
 	mux.HandleFunc("GET /logs", s.handleLogs)
 	mux.HandleFunc("POST /logs/clear", s.handleLogsClear)
+	mux.HandleFunc("GET /agents", s.handleAgentList)
+	mux.HandleFunc("GET /agents/new", s.handleAgentNewForm)
+	mux.HandleFunc("POST /agents", s.handleAgentCreate)
+	mux.HandleFunc("GET /agents/{id}/edit", s.handleAgentEditForm)
+	mux.HandleFunc("POST /agents/{id}", s.handleAgentUpdate)
+	mux.HandleFunc("POST /agents/{id}/delete", s.handleAgentDelete)
 	mux.HandleFunc("GET /databases/{id}/files", s.handleDatabaseFiles)
 	mux.HandleFunc("GET /databases/{id}/files/{fileID}/download", s.handleDatabaseFileDownload)
 
@@ -128,6 +134,7 @@ type formData struct {
 	Editing          bool
 	Database         registry.Database
 	StorageTargets   []registry.StorageTarget
+	RemoteAgents     []registry.RemoteAgent
 	NotifyChannels   []registry.NotifyChannel // every channel, to render as checkboxes
 	SelectedChannels map[int64]bool           // which of NotifyChannels are currently assigned
 	Timezone         string
@@ -165,13 +172,18 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	agents, err := s.reg.ListRemoteAgents(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	channels, err := s.reg.ListNotifyChannels(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	data := formData{
-		Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets,
+		Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets, RemoteAgents: agents,
 		NotifyChannels: channels, SelectedChannels: map[int64]bool{}, Timezone: s.schedulerTimezone,
 	}
 	if err := tmpl.ExecuteTemplate(w, "form.html", data); err != nil {
@@ -222,6 +234,11 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	agents, err := s.reg.ListRemoteAgents(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	channels, err := s.reg.ListNotifyChannels(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -237,7 +254,7 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 		selectedChannels[c.ID] = true
 	}
 	data := formData{
-		Action: "/edit/" + r.PathValue("id"), Database: *d, Editing: true, StorageTargets: targets, Timezone: s.schedulerTimezone,
+		Action: "/edit/" + r.PathValue("id"), Database: *d, Editing: true, StorageTargets: targets, RemoteAgents: agents, Timezone: s.schedulerTimezone,
 		NotifyChannels: channels, SelectedChannels: selectedChannels,
 		TimesCard: scheduleTimesCard{
 			Title:        fmt.Sprintf("Lịch backup tự động (giờ %s)", s.schedulerTimezone),
@@ -630,7 +647,7 @@ func (s *Server) handleBackupNow(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID)
+	job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, d.AgentID)
 	if err := s.q.Push(r.Context(), job); err != nil {
 		http.Error(w, fmt.Sprintf("enqueue backup: %v", err), http.StatusInternalServerError)
 		return
@@ -1292,6 +1309,7 @@ func parseForm(r *http.Request) (registry.Database, []int64, error) {
 		return registry.Database{}, nil, err
 	}
 	storageTargetID, _ := strconv.ParseInt(r.FormValue("storage_target_id"), 10, 64)
+	agentID, _ := strconv.ParseInt(r.FormValue("agent_id"), 10, 64)
 	var notifyChannelIDs []int64
 	for _, v := range r.Form["notify_channel_ids"] {
 		id, err := strconv.ParseInt(v, 10, 64)
@@ -1309,7 +1327,141 @@ func parseForm(r *http.Request) (registry.Database, []int64, error) {
 		Password:        r.FormValue("password"),
 		AuthDB:          r.FormValue("auth_db"),
 		StorageTargetID: storageTargetID,
+		AgentID:         agentID,
 		Enabled:         r.FormValue("enabled") == "on",
 	}
 	return d, notifyChannelIDs, nil
+}
+
+func (s *Server) handleAgentList(w http.ResponseWriter, r *http.Request) {
+	agents, err := s.reg.ListRemoteAgents(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := tmpl.ExecuteTemplate(w, "agents.html", struct {
+		Agents []registry.RemoteAgent
+	}{agents}); err != nil {
+		log.Println("render agents:", err)
+	}
+}
+
+// agentFormData backs agent_form.html, used for both the "add new" and
+// "edit existing" pages.
+type agentFormData struct {
+	Editing bool
+	Action  string
+	Agent   registry.RemoteAgent
+	Error   string
+}
+
+func (s *Server) renderAgentForm(w http.ResponseWriter, data agentFormData) {
+	if err := tmpl.ExecuteTemplate(w, "agent_form.html", data); err != nil {
+		log.Println("render agent form:", err)
+	}
+}
+
+func (s *Server) handleAgentNewForm(w http.ResponseWriter, r *http.Request) {
+	s.renderAgentForm(w, agentFormData{Action: "/agents"})
+}
+
+func (s *Server) handleAgentEditForm(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	agent, err := s.reg.GetRemoteAgent(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if agent == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.renderAgentForm(w, agentFormData{Editing: true, Action: fmt.Sprintf("/agents/%d", id), Agent: *agent})
+}
+
+// parseAgentForm reads the fields shared by the add and edit forms.
+func parseAgentForm(r *http.Request) (registry.RemoteAgent, error) {
+	if err := r.ParseForm(); err != nil {
+		return registry.RemoteAgent{}, err
+	}
+	return registry.RemoteAgent{
+		Label:           strings.TrimSpace(r.FormValue("label")),
+		Endpoint:        strings.TrimSpace(r.FormValue("endpoint")),
+		Token:           strings.TrimSpace(r.FormValue("token")),
+		CertFingerprint: strings.TrimSpace(r.FormValue("cert_fingerprint")),
+	}, nil
+}
+
+func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
+	agent, err := parseAgentForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data := agentFormData{Action: "/agents", Agent: agent}
+	if agent.Label == "" || agent.Endpoint == "" || agent.Token == "" || agent.CertFingerprint == "" {
+		data.Error = "Vui lòng nhập đủ tên gợi nhớ, endpoint, token và cert fingerprint"
+		s.renderAgentForm(w, data)
+		return
+	}
+	if _, err := s.reg.CreateRemoteAgent(r.Context(), agent); err != nil {
+		data.Error = err.Error()
+		s.renderAgentForm(w, data)
+		return
+	}
+	http.Redirect(w, r, "/agents", http.StatusSeeOther)
+}
+
+func (s *Server) handleAgentUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	existing, err := s.reg.GetRemoteAgent(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if existing == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	agent, err := parseAgentForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	agent.ID = id
+	action := fmt.Sprintf("/agents/%d", id)
+	data := agentFormData{Editing: true, Action: action, Agent: agent}
+	if agent.Label == "" || agent.Endpoint == "" || agent.Token == "" || agent.CertFingerprint == "" {
+		data.Error = "Vui lòng nhập đủ tên gợi nhớ, endpoint, token và cert fingerprint"
+		s.renderAgentForm(w, data)
+		return
+	}
+	if err := s.reg.UpdateRemoteAgent(r.Context(), agent); err != nil {
+		data.Error = err.Error()
+		s.renderAgentForm(w, data)
+		return
+	}
+	http.Redirect(w, r, "/agents", http.StatusSeeOther)
+}
+
+func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := s.reg.DeleteRemoteAgent(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/agents", http.StatusSeeOther)
 }

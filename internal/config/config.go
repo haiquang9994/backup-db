@@ -32,6 +32,15 @@ type Config struct {
 	AdminPassword string
 	AdminPort     string
 
+	// Agent* configure the `backupdb agent` subcommand — a standalone HTTPS
+	// server for dump+upload on a database server this deployment can't
+	// reach any other way (see internal/agentproto). Unused by every other
+	// subcommand.
+	AgentPort     string
+	AgentToken    string // shared secret; required to start the agent, never defaulted
+	AgentCertFile string // self-signed TLS cert, generated on first run if missing
+	AgentKeyFile  string
+
 	TmpDir string
 }
 
@@ -56,6 +65,11 @@ func Load() *Config {
 		AdminUsername: getEnv("ADMIN_USERNAME", ""),
 		AdminPassword: getEnv("ADMIN_PASSWORD", ""),
 		AdminPort:     getEnv("ADMIN_PORT", "8080"),
+
+		AgentPort:     getEnv("AGENT_PORT", "8443"),
+		AgentToken:    getEnv("AGENT_TOKEN", ""),
+		AgentCertFile: getEnv("AGENT_CERT_FILE", "./data/agent-cert.pem"),
+		AgentKeyFile:  getEnv("AGENT_KEY_FILE", "./data/agent-key.pem"),
 
 		TmpDir: getEnv("TMP_DIR", os.TempDir()+"/backupdb"),
 	}

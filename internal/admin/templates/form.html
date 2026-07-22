@@ -55,6 +55,16 @@
       </select>
     </label>
     {{if not .StorageTargets}}<p class="hint">Chưa có nơi lưu trữ nào — vào trang <a href="/storage">Nơi lưu trữ</a> để kết nối Google Drive hoặc S3.</p>{{end}}
+    <label>Chạy backup trên
+      <select name="agent_id">
+        <option value="0">— Server này (mặc định) —</option>
+        {{$dbAgentID := .Database.AgentID}}
+        {{range .RemoteAgents}}
+        <option value="{{.ID}}" {{if eq $dbAgentID .ID}}selected{{end}}>{{.Label}}</option>
+        {{end}}
+      </select>
+    </label>
+    <p class="hint">Chỉ đổi nếu database này chỉ kết nối được từ 1 server khác — vào trang <a href="/agents">Agent từ xa</a> để khai báo.</p>
     <label>Kênh thông báo
       <div class="checkbox-group">
         {{$selectedChannels := .SelectedChannels}}

@@ -49,7 +49,7 @@ func runBackup(args []string) error {
 	}
 
 	for _, d := range dbs {
-		job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID)
+		job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, d.AgentID)
 		if err := q.Push(ctx, job); err != nil {
 			return fmt.Errorf("enqueue %s: %w", d.Name, err)
 		}

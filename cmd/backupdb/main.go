@@ -27,6 +27,8 @@ func main() {
 		err = runScheduler(args)
 	case "admin":
 		err = runAdmin(args)
+	case "agent":
+		err = runAgent(args)
 	case "upload":
 		err = runUpload(args)
 	case "migrate":

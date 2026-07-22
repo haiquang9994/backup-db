@@ -79,7 +79,7 @@ func checkAndEnqueue(ctx context.Context, reg *registry.Registry, q *queue.Clien
 
 func enqueueDue(ctx context.Context, reg *registry.Registry, q *queue.Client, now time.Time, item registry.DueJob, markRun func(context.Context, int64, string) error) {
 	d := item.Database
-	job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID)
+	job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, d.AgentID)
 
 	if err := q.Push(ctx, job); err != nil {
 		fmt.Fprintf(os.Stderr, "enqueue %s: %v\n", d.Name, err)

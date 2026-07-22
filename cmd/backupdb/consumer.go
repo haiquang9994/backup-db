@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
+	"backupdb/internal/agentproto"
 	"backupdb/internal/config"
 	"backupdb/internal/dump"
 	"backupdb/internal/notify"
@@ -53,6 +55,17 @@ func runConsumer(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	// Jobs dispatched to a remote agent spend almost all their time idly
+	// polling over the network, not doing real work on this machine — run
+	// those in the background instead of blocking the loop, so a slow (or
+	// slow-to-respond) agent never stalls every other database's backup
+	// behind it. Local jobs keep processing one at a time as before (still
+	// worth serializing: several mysqldump/pg_dump/mongodump at once would
+	// compete for this machine's own CPU/network). wg makes sure any
+	// still-running background dispatch finishes before reg/q close below.
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
 	logLine("Consumer started, waiting for jobs...")
 
 	for ctx.Err() == nil {
@@ -66,6 +79,14 @@ func runConsumer(args []string) error {
 			continue
 		}
 		if job == nil {
+			continue
+		}
+		if job.AgentID != 0 {
+			wg.Add(1)
+			go func(j queue.Job) {
+				defer wg.Done()
+				processJob(ctx, cfg, reg, loc, j)
+			}(*job)
 			continue
 		}
 		processJob(ctx, cfg, reg, loc, *job)
@@ -167,17 +188,16 @@ type uploadResult struct {
 }
 
 func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Registry, job queue.Job) (*uploadResult, error) {
+	if job.AgentID != 0 {
+		return remoteBackupAndUpload(ctx, reg, job)
+	}
+
 	start := time.Now()
 	params := dump.ParseParams(job.Params)
 
-	var ext string
-	switch job.Driver {
-	case "mysql", "postgres":
-		ext = "sql"
-	case "mongo":
-		ext = "archive"
-	default:
-		return nil, fmt.Errorf("unknown driver: %s", job.Driver)
+	ext, err := dump.Extension(job.Driver)
+	if err != nil {
+		return nil, err
 	}
 
 	date := time.Now().Format("060102")
@@ -186,7 +206,6 @@ func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Regi
 	outPath := filepath.Join(cfg.TmpDir, filename)
 
 	dumpStart := time.Now()
-	var err error
 	switch job.Driver {
 	case "mysql":
 		err = dump.MySQL(ctx, job.DBName, params, outPath)
@@ -230,6 +249,89 @@ func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Regi
 
 	_ = os.Remove(outPath)
 	return &uploadResult{Filename: filename, RemoteRef: remoteRef, SizeBytes: sizeBytes, StorageTargetID: job.StorageTargetID}, nil
+}
+
+// remoteAgentPollInterval and remoteAgentMaxWait bound how the consumer
+// waits on a job dispatched to a remote_agents server: poll gently (no
+// point hammering a dump that takes minutes to run), but give up eventually
+// rather than blocking every other queued job forever if an agent never
+// reports "done" — a bug on its side, or it silently died mid-job.
+const (
+	remoteAgentPollInterval = 5 * time.Second
+	remoteAgentMaxWait      = 6 * time.Hour
+)
+
+// remoteBackupAndUpload dispatches the dump+upload to a remote_agents
+// server instead of running it in this process: this deployment either
+// can't reach the target database directly, or isn't allowed to expose any
+// inbound port for the agent to call back on, so the consumer pushes the
+// job (internal/agentproto.Client.Run) and polls for the result itself —
+// the only connections here are outbound, initiated by this side. On
+// success the returned *uploadResult is identical in shape to the local
+// path's, so every caller downstream (recordBackupRun/recordBackupFile/
+// notify) needs no branching of its own.
+func remoteBackupAndUpload(ctx context.Context, reg *registry.Registry, job queue.Job) (*uploadResult, error) {
+	agent, err := reg.GetRemoteAgent(ctx, job.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("load remote agent #%d: %w", job.AgentID, err)
+	}
+	if agent == nil {
+		return nil, fmt.Errorf("remote agent #%d not found (was it deleted?)", job.AgentID)
+	}
+	if job.StorageTargetID == 0 {
+		return nil, fmt.Errorf("no storage destination selected for this database — assign one in the admin UI")
+	}
+	target, err := reg.GetStorageTarget(ctx, job.StorageTargetID)
+	if err != nil {
+		return nil, fmt.Errorf("load storage destination #%d: %w", job.StorageTargetID, err)
+	}
+	if target == nil {
+		return nil, fmt.Errorf("storage destination #%d not found (was it deleted?)", job.StorageTargetID)
+	}
+
+	client := agentproto.NewClient(agent.Endpoint, agent.Token, agent.CertFingerprint)
+	jobID, err := client.Run(ctx, agentproto.RunRequest{
+		DBName: job.DBName,
+		Driver: job.Driver,
+		Params: job.Params,
+		Storage: agentproto.StorageConfig{
+			Kind: target.Kind, Label: target.Label, Config: target.Config,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dispatch to agent %q: %w", agent.Label, err)
+	}
+	logLine("%s: dispatched to agent %q, job %s", job.DBName, agent.Label, jobID)
+
+	deadline := time.Now().Add(remoteAgentMaxWait)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(remoteAgentPollInterval):
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("agent %q job %s: timed out after %s waiting for a result", agent.Label, jobID, remoteAgentMaxWait)
+		}
+
+		status, err := client.Status(ctx, jobID)
+		if err != nil {
+			logErr("%s: poll agent %q job %s: %v", job.DBName, agent.Label, jobID, err)
+			continue
+		}
+		if status.Status != "done" {
+			continue
+		}
+		if !status.Success {
+			return nil, fmt.Errorf("agent %q: %s", agent.Label, status.Message)
+		}
+		return &uploadResult{
+			Filename:        status.Filename,
+			RemoteRef:       status.RemoteRef,
+			SizeBytes:       status.SizeBytes,
+			StorageTargetID: job.StorageTargetID,
+		}, nil
+	}
 }
 
 func round(d time.Duration) time.Duration {

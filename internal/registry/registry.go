@@ -25,6 +25,7 @@ type Database struct {
 	Password        string
 	AuthDB          string
 	StorageTargetID int64 // 0 = none selected yet; see StorageTarget
+	AgentID         int64 // 0 = run locally; see RemoteAgent
 	Enabled         bool
 	CreatedAt       string
 	UpdatedAt       string
@@ -67,6 +68,9 @@ func Open(path string) (*Registry, error) {
 	}
 	if err := migrateNotifyChannelEvents(db); err != nil {
 		return nil, fmt.Errorf("migrate notify channel events: %w", err)
+	}
+	if err := migrateAgentIDColumn(db); err != nil {
+		return nil, fmt.Errorf("migrate agent_id column: %w", err)
 	}
 
 	return &Registry{db: db}, nil
@@ -158,16 +162,32 @@ func migrateNotifyChannelEvents(db *sql.DB) error {
 	return tx.Commit()
 }
 
+// migrateAgentIDColumn adds databases.agent_id for installs that predate
+// remote agent support — CREATE TABLE IF NOT EXISTS never touches an
+// already-existing databases table, so this ALTER TABLE is the only way an
+// existing deployment picks up the new column.
+func migrateAgentIDColumn(db *sql.DB) error {
+	has, err := hasColumn(db, "databases", "agent_id")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE databases ADD COLUMN agent_id INTEGER NOT NULL DEFAULT 0")
+	return err
+}
+
 func (r *Registry) Close() error {
 	return r.db.Close()
 }
 
-const columns = "id, name, driver, host, port, username, password, auth_db, storage_target_id, enabled, created_at, updated_at"
+const columns = "id, name, driver, host, port, username, password, auth_db, storage_target_id, agent_id, enabled, created_at, updated_at"
 
 func scanDatabase(row interface{ Scan(...any) error }) (Database, error) {
 	var d Database
 	var enabled int
-	err := row.Scan(&d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &enabled, &d.CreatedAt, &d.UpdatedAt)
+	err := row.Scan(&d.ID, &d.Name, &d.Driver, &d.Host, &d.Port, &d.Username, &d.Password, &d.AuthDB, &d.StorageTargetID, &d.AgentID, &enabled, &d.CreatedAt, &d.UpdatedAt)
 	d.Enabled = enabled != 0
 	return d, err
 }
@@ -234,9 +254,9 @@ func (r *Registry) GetByName(ctx context.Context, name string) (*Database, error
 
 func (r *Registry) Create(ctx context.Context, d Database) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO databases (name, driver, host, port, username, password, auth_db, storage_target_id, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, boolToInt(d.Enabled),
+		`INSERT INTO databases (name, driver, host, port, username, password, auth_db, storage_target_id, agent_id, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, d.AgentID, boolToInt(d.Enabled),
 	)
 	if err != nil {
 		return 0, err
@@ -247,9 +267,9 @@ func (r *Registry) Create(ctx context.Context, d Database) (int64, error) {
 func (r *Registry) Update(ctx context.Context, d Database) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE databases
-		 SET name = ?, driver = ?, host = ?, port = ?, username = ?, password = ?, auth_db = ?, storage_target_id = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+		 SET name = ?, driver = ?, host = ?, port = ?, username = ?, password = ?, auth_db = ?, storage_target_id = ?, agent_id = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`,
-		d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, boolToInt(d.Enabled), d.ID,
+		d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, d.AgentID, boolToInt(d.Enabled), d.ID,
 	)
 	return err
 }
@@ -986,4 +1006,79 @@ func (r *Registry) GetBackupFile(ctx context.Context, id int64) (*BackupFile, er
 		return nil, err
 	}
 	return &f, nil
+}
+
+// RemoteAgent is one configured `backupdb agent` endpoint — a database
+// picking a non-zero AgentID routes its backup through that server instead
+// of the local consumer. Token is the shared secret sent as a Bearer
+// header; CertFingerprint pins the agent's self-signed TLS certificate
+// (SHA-256 of the DER-encoded leaf, hex) since there's no public CA here.
+type RemoteAgent struct {
+	ID              int64
+	Label           string
+	Endpoint        string
+	Token           string
+	CertFingerprint string
+	CreatedAt       string
+	UpdatedAt       string
+}
+
+func (r *Registry) ListRemoteAgents(ctx context.Context) ([]RemoteAgent, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, label, endpoint, token, cert_fingerprint, created_at, updated_at FROM remote_agents ORDER BY label",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []RemoteAgent
+	for rows.Next() {
+		var a RemoteAgent
+		if err := rows.Scan(&a.ID, &a.Label, &a.Endpoint, &a.Token, &a.CertFingerprint, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (r *Registry) GetRemoteAgent(ctx context.Context, id int64) (*RemoteAgent, error) {
+	row := r.db.QueryRowContext(ctx,
+		"SELECT id, label, endpoint, token, cert_fingerprint, created_at, updated_at FROM remote_agents WHERE id = ?", id,
+	)
+	var a RemoteAgent
+	err := row.Scan(&a.ID, &a.Label, &a.Endpoint, &a.Token, &a.CertFingerprint, &a.CreatedAt, &a.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func (r *Registry) CreateRemoteAgent(ctx context.Context, a RemoteAgent) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		"INSERT INTO remote_agents (label, endpoint, token, cert_fingerprint) VALUES (?, ?, ?, ?)",
+		a.Label, a.Endpoint, a.Token, a.CertFingerprint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (r *Registry) UpdateRemoteAgent(ctx context.Context, a RemoteAgent) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE remote_agents SET label = ?, endpoint = ?, token = ?, cert_fingerprint = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`,
+		a.Label, a.Endpoint, a.Token, a.CertFingerprint, a.ID,
+	)
+	return err
+}
+
+func (r *Registry) DeleteRemoteAgent(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM remote_agents WHERE id = ?", id)
+	return err
 }

@@ -18,14 +18,20 @@ type Job struct {
 	Driver          string `json:"driver"`
 	Params          string `json:"params"`
 	StorageTargetID int64  `json:"storage_target_id"`
+	// AgentID is 0 for the common case (dump+upload locally, in this
+	// consumer). A non-zero value means the database is only reachable
+	// from a different server: the consumer dispatches the job to that
+	// remote_agents row over HTTPS instead of running it itself, and only
+	// polls for the result. See internal/agentproto.
+	AgentID int64 `json:"agent_id"`
 }
 
 // NewBackupJob builds the Job for one database's backup, packing its
 // connection details into the pipe-delimited Params string that
 // dump.ParseParams expects on the consumer side.
-func NewBackupJob(dbname, driver, host, port, username, password, authDB string, storageTargetID int64) Job {
+func NewBackupJob(dbname, driver, host, port, username, password, authDB string, storageTargetID, agentID int64) Job {
 	params := fmt.Sprintf("%s|%s|%s|%s|%s", host, port, username, password, authDB)
-	return Job{Cmd: "backup", DBName: dbname, Driver: driver, Params: params, StorageTargetID: storageTargetID}
+	return Job{Cmd: "backup", DBName: dbname, Driver: driver, Params: params, StorageTargetID: storageTargetID, AgentID: agentID}
 }
 
 type Client struct {

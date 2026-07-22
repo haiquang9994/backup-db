@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS databases (
 	-- database. Deleting a storage target still in use is instead handled
 	-- at upload time (storage.New returns a clear "not found" error).
 	storage_target_id INTEGER NOT NULL DEFAULT 0,
+	-- 0 means "run locally" (the consumer on this same deployment) — same
+	-- sentinel convention as storage_target_id. A non-zero value routes the
+	-- job to a remote_agents row instead: the consumer dumps+uploads on
+	-- that other server (reachable directly, no queue involved) and only
+	-- polls it for the result.
+	agent_id          INTEGER NOT NULL DEFAULT 0,
 	enabled           INTEGER NOT NULL DEFAULT 1,
 	created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -140,4 +146,22 @@ CREATE TABLE IF NOT EXISTS backup_files (
 );
 
 CREATE INDEX IF NOT EXISTS idx_backup_files_database_id_id_desc ON backup_files(database_id, id DESC);
+
+-- remote_agents holds every configured "backupdb agent" endpoint — a
+-- standalone HTTPS server (backupdb agent subcommand) running on a
+-- different server that owns dump+upload for databases only it can reach
+-- directly, when this deployment isn't allowed to expose any inbound port
+-- of its own to reach that server's database over the network. token is a
+-- shared secret sent as a Bearer header; cert_fingerprint pins the agent's
+-- self-signed TLS certificate (SHA-256 of the DER-encoded leaf, hex) since
+-- there is no public CA involved.
+CREATE TABLE IF NOT EXISTS remote_agents (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	label            TEXT NOT NULL,
+	endpoint         TEXT NOT NULL,
+	token            TEXT NOT NULL,
+	cert_fingerprint TEXT NOT NULL,
+	created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `
