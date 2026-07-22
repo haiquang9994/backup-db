@@ -13,12 +13,6 @@ type Config struct {
 
 	ProjectName string
 
-	MongoHost     string
-	MongoPort     string
-	MongoUsername string
-	MongoPassword string
-	MongoAuthDB   string
-
 	// GoogleCredentialsFile is the OAuth client (app identity), shared by
 	// every connected Google account. Per-account tokens live in the
 	// registry's storage_targets table, not on disk.
@@ -52,12 +46,6 @@ func Load() *Config {
 		RedisPort: getEnv("REDIS_PORT", "6379"),
 
 		ProjectName: getEnv("PROJECT_NAME", ""),
-
-		MongoHost:     getEnv("MONGO_HOST", "127.0.0.1"),
-		MongoPort:     getEnv("MONGO_PORT", "27017"),
-		MongoUsername: getEnv("MONGO_USERNAME", ""),
-		MongoPassword: getEnv("MONGO_PASSWORD", ""),
-		MongoAuthDB:   getEnv("MONGO_AUTH_DB", "admin"),
 
 		GoogleCredentialsFile: getEnv("GOOGLE_CREDENTIALS_FILE", "./google/credentials.json"),
 
