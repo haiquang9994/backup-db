@@ -373,6 +373,7 @@ func (s *Server) handleSharedScheduleList(w http.ResponseWriter, r *http.Request
 type sharedScheduleFormData struct {
 	Editing   bool
 	Action    string
+	Name      string
 	Databases []registry.Database // every database, to render as checkboxes
 	Selected  map[int64]bool      // which of Databases are currently members
 	Timezone  string
@@ -389,14 +390,14 @@ func (s *Server) renderSharedScheduleForm(w http.ResponseWriter, data sharedSche
 // renderSharedScheduleError re-fetches the database list (needed to render
 // the checkbox group again) and re-renders the form with an error, keeping
 // whatever the user had checked.
-func (s *Server) renderSharedScheduleError(w http.ResponseWriter, r *http.Request, editing bool, action string, id int64, times []registry.SharedScheduleTime, databaseIDs []int64, errMsg string) {
+func (s *Server) renderSharedScheduleError(w http.ResponseWriter, r *http.Request, editing bool, action string, id int64, times []registry.SharedScheduleTime, name string, databaseIDs []int64, errMsg string) {
 	dbs, err := s.reg.List(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	data := sharedScheduleFormData{
-		Editing: editing, Action: action, Databases: dbs, Selected: selectedSet(databaseIDs), Timezone: s.timezone, Error: errMsg,
+		Editing: editing, Action: action, Name: name, Databases: dbs, Selected: selectedSet(databaseIDs), Timezone: s.timezone, Error: errMsg,
 	}
 	if editing {
 		data.TimesCard = s.sharedScheduleTimesCard(id, times)
@@ -461,6 +462,7 @@ func (s *Server) handleSharedScheduleEditForm(w http.ResponseWriter, r *http.Req
 	s.renderSharedScheduleForm(w, sharedScheduleFormData{
 		Editing:   true,
 		Action:    fmt.Sprintf("/shared-schedules/%d", id),
+		Name:      sched.Name,
 		Databases: dbs,
 		Selected:  selected,
 		Timezone:  s.timezone,
@@ -468,12 +470,13 @@ func (s *Server) handleSharedScheduleEditForm(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// parseSharedScheduleForm reads the set of checked database checkboxes
-// shared by the add and edit forms.
-func parseSharedScheduleForm(r *http.Request) (databaseIDs []int64, err error) {
+// parseSharedScheduleForm reads the name field and set of checked database
+// checkboxes shared by the add and edit forms.
+func parseSharedScheduleForm(r *http.Request) (name string, databaseIDs []int64, err error) {
 	if err = r.ParseForm(); err != nil {
 		return
 	}
+	name = r.FormValue("name")
 	for _, v := range r.Form["database_ids"] {
 		id, convErr := strconv.ParseInt(v, 10, 64)
 		if convErr != nil {
@@ -485,18 +488,18 @@ func parseSharedScheduleForm(r *http.Request) (databaseIDs []int64, err error) {
 }
 
 func (s *Server) handleSharedScheduleCreate(w http.ResponseWriter, r *http.Request) {
-	databaseIDs, err := parseSharedScheduleForm(r)
+	name, databaseIDs, err := parseSharedScheduleForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if len(databaseIDs) == 0 {
-		s.renderSharedScheduleError(w, r, false, "/shared-schedules", 0, nil, databaseIDs, "Chọn ít nhất 1 database")
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", 0, nil, name, databaseIDs, "Chọn ít nhất 1 database")
 		return
 	}
-	id, err := s.reg.CreateSharedSchedule(r.Context(), databaseIDs)
+	id, err := s.reg.CreateSharedSchedule(r.Context(), name, databaseIDs)
 	if err != nil {
-		s.renderSharedScheduleError(w, r, false, "/shared-schedules", 0, nil, databaseIDs, err.Error())
+		s.renderSharedScheduleError(w, r, false, "/shared-schedules", 0, nil, name, databaseIDs, err.Error())
 		return
 	}
 	// Straight to the edit page — that's where khung giờ backup get added,
@@ -520,7 +523,7 @@ func (s *Server) handleSharedScheduleUpdate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	databaseIDs, err := parseSharedScheduleForm(r)
+	name, databaseIDs, err := parseSharedScheduleForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -528,11 +531,11 @@ func (s *Server) handleSharedScheduleUpdate(w http.ResponseWriter, r *http.Reque
 	action := fmt.Sprintf("/shared-schedules/%d", id)
 
 	if len(databaseIDs) == 0 {
-		s.renderSharedScheduleError(w, r, true, action, id, existing.Times, databaseIDs, "Chọn ít nhất 1 database")
+		s.renderSharedScheduleError(w, r, true, action, id, existing.Times, name, databaseIDs, "Chọn ít nhất 1 database")
 		return
 	}
-	if err := s.reg.UpdateSharedSchedule(r.Context(), id, databaseIDs); err != nil {
-		s.renderSharedScheduleError(w, r, true, action, id, existing.Times, databaseIDs, err.Error())
+	if err := s.reg.UpdateSharedSchedule(r.Context(), id, name, databaseIDs); err != nil {
+		s.renderSharedScheduleError(w, r, true, action, id, existing.Times, name, databaseIDs, err.Error())
 		return
 	}
 	http.Redirect(w, r, "/shared-schedules", http.StatusSeeOther)

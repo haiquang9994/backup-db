@@ -75,6 +75,9 @@ func Open(path string) (*Registry, error) {
 	if err := migrateDatabasesNameUniqueScope(db); err != nil {
 		return nil, fmt.Errorf("migrate databases name unique scope: %w", err)
 	}
+	if err := migrateSharedScheduleNameColumn(db); err != nil {
+		return nil, fmt.Errorf("migrate shared schedule name column: %w", err)
+	}
 	// Created here rather than in the schema string: an install upgrading
 	// from before agent_id existed wouldn't have that column yet at the
 	// point the schema string runs, only after migrateAgentIDColumn above.
@@ -186,6 +189,21 @@ func migrateAgentIDColumn(db *sql.DB) error {
 		return nil
 	}
 	_, err = db.Exec("ALTER TABLE databases ADD COLUMN agent_id INTEGER NOT NULL DEFAULT 0")
+	return err
+}
+
+// migrateSharedScheduleNameColumn adds shared_schedules.name for installs
+// that predate it — purely a display label, so existing rows default to ''
+// (shown in the admin UI as "Lịch chung #ID").
+func migrateSharedScheduleNameColumn(db *sql.DB) error {
+	has, err := hasColumn(db, "shared_schedules", "name")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE shared_schedules ADD COLUMN name TEXT NOT NULL DEFAULT ''")
 	return err
 }
 
@@ -573,6 +591,7 @@ func (r *Registry) MarkScheduleRun(ctx context.Context, id int64, date string) e
 // "fire at HH:MM, once per day" triggers are its Times, any number of them.
 type SharedSchedule struct {
 	ID        int64
+	Name      string // optional label, purely for the admin UI to tell groups apart
 	Enabled   bool
 	CreatedAt string
 	Times     []SharedScheduleTime
@@ -591,7 +610,7 @@ type SharedScheduleTime struct {
 
 func (r *Registry) ListSharedSchedules(ctx context.Context) ([]SharedSchedule, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, enabled, created_at FROM shared_schedules ORDER BY id",
+		"SELECT id, name, enabled, created_at FROM shared_schedules ORDER BY id",
 	)
 	if err != nil {
 		return nil, err
@@ -602,7 +621,7 @@ func (r *Registry) ListSharedSchedules(ctx context.Context) ([]SharedSchedule, e
 	for rows.Next() {
 		var s SharedSchedule
 		var enabled int
-		if err := rows.Scan(&s.ID, &enabled, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &enabled, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		s.Enabled = enabled != 0
@@ -629,11 +648,11 @@ func (r *Registry) ListSharedSchedules(ctx context.Context) ([]SharedSchedule, e
 
 func (r *Registry) GetSharedSchedule(ctx context.Context, id int64) (*SharedSchedule, error) {
 	row := r.db.QueryRowContext(ctx,
-		"SELECT id, enabled, created_at FROM shared_schedules WHERE id = ?", id,
+		"SELECT id, name, enabled, created_at FROM shared_schedules WHERE id = ?", id,
 	)
 	var s SharedSchedule
 	var enabled int
-	err := row.Scan(&s.ID, &enabled, &s.CreatedAt)
+	err := row.Scan(&s.ID, &s.Name, &enabled, &s.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -736,8 +755,8 @@ func (r *Registry) ListDatabasesForSharedSchedule(ctx context.Context, sharedSch
 	return out, rows.Err()
 }
 
-func (r *Registry) CreateSharedSchedule(ctx context.Context, databaseIDs []int64) (int64, error) {
-	res, err := r.db.ExecContext(ctx, "INSERT INTO shared_schedules DEFAULT VALUES")
+func (r *Registry) CreateSharedSchedule(ctx context.Context, name string, databaseIDs []int64) (int64, error) {
+	res, err := r.db.ExecContext(ctx, "INSERT INTO shared_schedules (name) VALUES (?)", name)
 	if err != nil {
 		return 0, err
 	}
@@ -751,9 +770,12 @@ func (r *Registry) CreateSharedSchedule(ctx context.Context, databaseIDs []int64
 	return id, nil
 }
 
-// UpdateSharedSchedule overwrites the full set of member databases (times
-// are managed separately via CreateSharedScheduleTime/DeleteSharedScheduleTime).
-func (r *Registry) UpdateSharedSchedule(ctx context.Context, id int64, databaseIDs []int64) error {
+// UpdateSharedSchedule overwrites the name and full set of member databases
+// (times are managed separately via CreateSharedScheduleTime/DeleteSharedScheduleTime).
+func (r *Registry) UpdateSharedSchedule(ctx context.Context, id int64, name string, databaseIDs []int64) error {
+	if _, err := r.db.ExecContext(ctx, "UPDATE shared_schedules SET name = ? WHERE id = ?", name, id); err != nil {
+		return err
+	}
 	return r.setSharedScheduleDatabases(ctx, id, databaseIDs)
 }
 

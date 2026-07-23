@@ -22,10 +22,11 @@
 
   <div class="table-wrap">
   <table>
-  <thead><tr><th>Khung giờ</th><th>Áp dụng cho</th><th>Trạng thái</th><th>Hành động</th></tr></thead>
+  <thead><tr><th>Tên</th><th>Khung giờ</th><th>Áp dụng cho</th><th>Trạng thái</th><th>Hành động</th></tr></thead>
   <tbody>
   {{range .}}
   <tr>
+    <td>{{.Name}}</td>
     <td>
       <div class="tag-list">
       {{range .Times}}<span class="tag" title="{{if .LastRunDate}}Chạy gần nhất {{.LastRunDate}}{{else}}Chưa chạy{{end}}">{{template "icon-clock"}} {{.TimeOfDay}}</span>{{else}}<span class="hint">Chưa có khung giờ</span>{{end}}
@@ -44,7 +45,7 @@
     </td>
   </tr>
   {{else}}
-  <tr><td class="empty-state" colspan="4">Chưa có lịch chung nào — bấm "Thêm lịch chung" để bắt đầu.</td></tr>
+  <tr><td class="empty-state" colspan="5">Chưa có lịch chung nào — bấm "Thêm lịch chung" để bắt đầu.</td></tr>
   {{end}}
   </tbody>
   </table>

@@ -19,6 +19,9 @@
 
   <div class="card">
   <form method="post" action="{{.Action}}" class="form">
+    <label>Tên
+      <input type="text" name="name" value="{{.Name}}" placeholder="VD: Backup buổi tối">
+    </label>
     <label>Áp dụng cho database
       <div class="checkbox-group">
         {{$selected := .Selected}}

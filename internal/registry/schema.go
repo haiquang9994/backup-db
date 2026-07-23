@@ -74,6 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_schedules_database_id ON schedules(database_id);
 -- above but decoupled from a single time per group.
 CREATE TABLE IF NOT EXISTS shared_schedules (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	name          TEXT NOT NULL DEFAULT '',  -- optional label, purely for the admin UI to tell groups apart
 	enabled       INTEGER NOT NULL DEFAULT 1,
 	created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
