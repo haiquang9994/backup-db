@@ -108,6 +108,23 @@ if (logsFilterBtn) {
   });
 }
 
+// Databases page "Chưa có lịch" button — same client-side row filter as the
+// logs page's, but keyed off data-has-schedule (server-computed from own
+// schedules + shared-schedule membership, see listDatabaseView in server.go).
+const dbFilterBtn = document.getElementById("databases-filter-unscheduled");
+if (dbFilterBtn) {
+  const rows = document.querySelectorAll("table tbody tr[data-has-schedule]");
+  let unscheduledOnly = false;
+  dbFilterBtn.addEventListener("click", () => {
+    unscheduledOnly = !unscheduledOnly;
+    rows.forEach((row) => {
+      row.style.display = unscheduledOnly && row.dataset.hasSchedule === "true" ? "none" : "";
+    });
+    dbFilterBtn.classList.toggle("primary", unscheduledOnly);
+    setLabel(dbFilterBtn, unscheduledOnly ? "Hiện tất cả" : "Chưa có lịch");
+  });
+}
+
 // "Nhân bản" button on each row of the databases list: same /new?data=...
 // prefill flow as the edit-form button below, but reading that row's
 // data-* attrs (server-rendered from the saved Database row, see

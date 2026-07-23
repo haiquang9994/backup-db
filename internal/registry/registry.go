@@ -517,6 +517,33 @@ func (r *Registry) ListSchedulesByDatabase(ctx context.Context, databaseID int64
 	return out, rows.Err()
 }
 
+// DatabaseIDsWithSchedule returns the set of database IDs that have at
+// least one backup trigger — either their own schedule (schedules) or
+// membership in a shared schedule (shared_schedule_databases), regardless
+// of enabled/disabled state — used by the admin databases list to power
+// its "Chưa có lịch" filter (handleList in server.go).
+func (r *Registry) DatabaseIDsWithSchedule(ctx context.Context) (map[int64]bool, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT database_id FROM schedules
+		UNION
+		SELECT database_id FROM shared_schedule_databases
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 func (r *Registry) GetSchedule(ctx context.Context, id int64) (*Schedule, error) {
 	row := r.db.QueryRowContext(ctx,
 		"SELECT id, database_id, time_of_day, enabled, last_run_date, created_at FROM schedules WHERE id = ?", id,

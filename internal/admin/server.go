@@ -164,6 +164,7 @@ type listDatabaseView struct {
 	registry.Database
 	AgentLabel       string
 	NotifyChannelIDs []int64 // backs the "Nhân bản" button's data-notify-channel-ids, see databases.html
+	HasSchedule      bool    // own schedule or shared-schedule membership; backs the "Chưa có lịch" filter
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +187,11 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	scheduledDatabaseIDs, err := s.reg.DatabaseIDsWithSchedule(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	views := make([]listDatabaseView, len(dbs))
 	for i, d := range dbs {
@@ -196,7 +202,10 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 				label = "Agent đã xoá"
 			}
 		}
-		views[i] = listDatabaseView{Database: d, AgentLabel: label, NotifyChannelIDs: notifyChannelIDs[d.ID]}
+		views[i] = listDatabaseView{
+			Database: d, AgentLabel: label, NotifyChannelIDs: notifyChannelIDs[d.ID],
+			HasSchedule: scheduledDatabaseIDs[d.ID],
+		}
 	}
 
 	if err := tmpl.ExecuteTemplate(w, "databases.html", views); err != nil {

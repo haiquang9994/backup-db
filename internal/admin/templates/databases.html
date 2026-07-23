@@ -16,6 +16,7 @@
       <p class="subtitle">Danh sách database đang được sao lưu định kỳ.</p>
     </div>
     <div class="page-head-actions">
+      <button type="button" id="databases-filter-unscheduled">{{template "icon-filter"}} <span class="label">Chưa có lịch</span></button>
       <a class="button primary" href="/new">{{template "icon-plus"}} Thêm database</a>
     </div>
   </div>
@@ -27,7 +28,7 @@
   </thead>
   <tbody>
   {{range .}}
-  <tr>
+  <tr data-has-schedule="{{.HasSchedule}}">
     <td>{{.Name}}</td>
     <td><span class="tag">{{.Driver}}</span></td>
     <td>{{.Host}}</td>
