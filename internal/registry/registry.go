@@ -1016,6 +1016,28 @@ func (r *Registry) ListNotifyChannelsForDatabase(ctx context.Context, databaseID
 	return out, rows.Err()
 }
 
+// NotifyChannelIDsByDatabase returns every database's assigned notify
+// channel IDs in one query, keyed by database_id — used by the admin
+// databases list (handleList) to back its "Nhân bản" button without an
+// N+1 ListNotifyChannelsForDatabase call per row.
+func (r *Registry) NotifyChannelIDsByDatabase(ctx context.Context) (map[int64][]int64, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT database_id, notify_channel_id FROM database_notify_channels")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int64][]int64)
+	for rows.Next() {
+		var dbID, channelID int64
+		if err := rows.Scan(&dbID, &channelID); err != nil {
+			return nil, err
+		}
+		out[dbID] = append(out[dbID], channelID)
+	}
+	return out, rows.Err()
+}
+
 func (r *Registry) CreateNotifyChannel(ctx context.Context, kind, label, config string) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
 		"INSERT INTO notify_channels (kind, label, config) VALUES (?, ?, ?)",

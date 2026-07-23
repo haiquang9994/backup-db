@@ -111,12 +111,9 @@ if (logsFilterBtn) {
 // "Nhân bản" button on each row of the databases list: same /new?data=...
 // prefill flow as the edit-form button below, but reading that row's
 // data-* attrs (server-rendered from the saved Database row, see
-// databases.html) instead of live form fields — there's no <form> on the
-// list page to read from. Event-delegated since there's one button per row.
-// Notify channels aren't carried over here (the list page doesn't load
-// per-database channel assignments to avoid an extra query per row) — the
-// user can pick them after saving, same as the "add schedules after saving"
-// hint already on the add-database form.
+// databases.html / listDatabaseView in server.go) instead of live form
+// fields — there's no <form> on the list page to read from. Event-delegated
+// since there's one button per row.
 document.addEventListener("click", (e) => {
   const btn = e.target.closest(".duplicate-row-btn");
   if (!btn) return;
@@ -130,7 +127,7 @@ document.addEventListener("click", (e) => {
     auth_db: btn.dataset.authDb,
     storage_target_id: Number(btn.dataset.storageTargetId) || 0,
     agent_id: Number(btn.dataset.agentId) || 0,
-    notify_channel_ids: [],
+    notify_channel_ids: JSON.parse(btn.dataset.notifyChannelIds),
     enabled: btn.dataset.enabled === "true",
   };
   location.href = "/new?data=" + encodeURIComponent(JSON.stringify(payload));
