@@ -108,6 +108,64 @@ if (logsFilterBtn) {
   });
 }
 
+// "Nhân bản" button on each row of the databases list: same /new?data=...
+// prefill flow as the edit-form button below, but reading that row's
+// data-* attrs (server-rendered from the saved Database row, see
+// databases.html) instead of live form fields — there's no <form> on the
+// list page to read from. Event-delegated since there's one button per row.
+// Notify channels aren't carried over here (the list page doesn't load
+// per-database channel assignments to avoid an extra query per row) — the
+// user can pick them after saving, same as the "add schedules after saving"
+// hint already on the add-database form.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".duplicate-row-btn");
+  if (!btn) return;
+  const payload = {
+    name: btn.dataset.name,
+    driver: btn.dataset.driver,
+    host: btn.dataset.host,
+    port: btn.dataset.port,
+    username: btn.dataset.username,
+    password: btn.dataset.password,
+    auth_db: btn.dataset.authDb,
+    storage_target_id: Number(btn.dataset.storageTargetId) || 0,
+    agent_id: Number(btn.dataset.agentId) || 0,
+    notify_channel_ids: [],
+    enabled: btn.dataset.enabled === "true",
+  };
+  location.href = "/new?data=" + encodeURIComponent(JSON.stringify(payload));
+});
+
+// "Nhân bản" button on the edit-database form: reads whatever is currently
+// in the form fields (not necessarily saved yet, if the user tweaked
+// something first), JSON-encodes them into a single `data` query param, and
+// navigates to /new?data=... — handleNewForm (server.go) decodes it back
+// into the "add database" form so the user only has to change a few fields
+// (e.g. name, host) instead of re-entering everything.
+const duplicateBtn = document.getElementById("duplicate-btn");
+if (duplicateBtn) {
+  duplicateBtn.addEventListener("click", () => {
+    const form = duplicateBtn.closest("form");
+    const notifyChannelIDs = Array.from(
+      form.querySelectorAll('input[name="notify_channel_ids"]:checked'),
+    ).map((el) => Number(el.value));
+    const payload = {
+      name: form.elements.name.value,
+      driver: form.elements.driver.value,
+      host: form.elements.host.value,
+      port: form.elements.port.value,
+      username: form.elements.username.value,
+      password: form.elements.password.value,
+      auth_db: form.elements.auth_db.value,
+      storage_target_id: Number(form.elements.storage_target_id.value) || 0,
+      agent_id: Number(form.elements.agent_id.value) || 0,
+      notify_channel_ids: notifyChannelIDs,
+      enabled: form.elements.enabled.checked,
+    };
+    location.href = "/new?data=" + encodeURIComponent(JSON.stringify(payload));
+  });
+}
+
 // Auth DB only applies to mongo — the form ships it pre-hidden/shown for the
 // current driver (server-rendered, avoids a flash of the wrong state), this
 // just keeps it in sync as the user changes the driver dropdown.

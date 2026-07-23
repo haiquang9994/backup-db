@@ -85,6 +85,7 @@
     </label>
     <div class="form-actions">
       <button type="submit">{{template "icon-plus"}} Lưu</button>
+      {{if .Editing}}<button type="button" id="duplicate-btn">{{template "icon-copy"}} Nhân bản</button>{{end}}
       <a class="button" href="/">Huỷ</a>
     </div>
   </form>

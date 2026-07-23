@@ -218,6 +218,17 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 		Action: "/new", Database: registry.Database{Driver: "mysql", Enabled: true}, StorageTargets: targets, RemoteAgents: agents,
 		NotifyChannels: channels, SelectedChannels: map[int64]bool{}, Timezone: s.timezone,
 	}
+	if raw := r.URL.Query().Get("data"); raw != "" {
+		var p duplicatePayload
+		if err := json.Unmarshal([]byte(raw), &p); err == nil {
+			data.Database = registry.Database{
+				Name: p.Name, Driver: p.Driver, Host: p.Host, Port: p.Port,
+				Username: p.Username, Password: p.Password, AuthDB: p.AuthDB,
+				StorageTargetID: p.StorageTargetID, AgentID: p.AgentID, Enabled: p.Enabled,
+			}
+			data.SelectedChannels = selectedSet(p.NotifyChannelIDs)
+		}
+	}
 	if err := tmpl.ExecuteTemplate(w, "database_form.html", data); err != nil {
 		log.Println("render form:", err)
 	}
@@ -1400,6 +1411,27 @@ func parseForm(r *http.Request) (registry.Database, []int64, error) {
 		Enabled:         r.FormValue("enabled") == "on",
 	}
 	return d, notifyChannelIDs, nil
+}
+
+// duplicatePayload mirrors the field set captured client-side by the
+// database_form.html "Nhân bản" button (see app.js): it JSON-encodes the
+// *currently displayed* values of the edit form (which may differ from
+// what's saved, if the user tweaked something first) into a single `data`
+// query param and navigates to /new?data=..., so handleNewForm can prefill
+// a fresh "add database" form from them — a quick way to add a new database
+// that's mostly identical to an existing one.
+type duplicatePayload struct {
+	Name             string  `json:"name"`
+	Driver           string  `json:"driver"`
+	Host             string  `json:"host"`
+	Port             string  `json:"port"`
+	Username         string  `json:"username"`
+	Password         string  `json:"password"`
+	AuthDB           string  `json:"auth_db"`
+	StorageTargetID  int64   `json:"storage_target_id"`
+	AgentID          int64   `json:"agent_id"`
+	NotifyChannelIDs []int64 `json:"notify_channel_ids"`
+	Enabled          bool    `json:"enabled"`
 }
 
 func (s *Server) handleAgentList(w http.ResponseWriter, r *http.Request) {
