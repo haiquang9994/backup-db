@@ -104,6 +104,9 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 	started := time.Now().In(loc)
 	result, jobErr := backupAndUpload(ctx, cfg, reg, loc, job)
 	duration := time.Since(started)
+	if jobErr == nil && result != nil && result.DurationMS > 0 {
+		duration = time.Duration(result.DurationMS) * time.Millisecond
+	}
 	if jobErr != nil {
 		logErr("%s: FAILED: %v", job.DBName, jobErr)
 	}
@@ -180,12 +183,20 @@ func recordBackupFile(ctx context.Context, reg *registry.Registry, d *registry.D
 }
 
 // uploadResult carries the details recordBackupFile needs, once
-// backupAndUpload's dump+upload has actually succeeded.
+// backupAndUpload's dump+upload has actually succeeded. DurationMS is only
+// set by the remote-agent path (see remoteBackupAndUpload) — the agent
+// measures its own dump-start-to-upload-done time, which is what
+// processJob prefers over its own wall-clock measurement so a job queued
+// behind others on a busy agent doesn't get logged with that queue wait
+// counted as backup time. Zero means "use the wall-clock duration instead"
+// (the local path's own timing is already accurate, since a local job never
+// waits behind another queued job before processJob starts timing it).
 type uploadResult struct {
 	Filename        string
 	RemoteRef       string
 	SizeBytes       int64
 	StorageTargetID int64
+	DurationMS      int64
 }
 
 func backupAndUpload(ctx context.Context, cfg *config.Config, reg *registry.Registry, loc *time.Location, job queue.Job) (*uploadResult, error) {
@@ -332,6 +343,7 @@ func remoteBackupAndUpload(ctx context.Context, reg *registry.Registry, loc *tim
 			RemoteRef:       status.RemoteRef,
 			SizeBytes:       status.SizeBytes,
 			StorageTargetID: job.StorageTargetID,
+			DurationMS:      status.DurationMS,
 		}, nil
 	}
 }
