@@ -709,7 +709,11 @@ func (s *Server) handleBackupNow(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, d.AgentID)
+	runID, err := s.reg.CreateBackupRun(r.Context(), registry.BackupRun{DatabaseID: d.ID, DBName: d.Name, Driver: d.Driver, Status: "running"})
+	if err != nil {
+		log.Println("create backup run for", d.Name, ":", err)
+	}
+	job := queue.NewBackupJob(d.Name, d.Driver, d.Host, d.Port, d.Username, d.Password, d.AuthDB, d.StorageTargetID, d.AgentID, runID)
 	if err := s.q.Push(r.Context(), job); err != nil {
 		http.Error(w, fmt.Sprintf("enqueue backup: %v", err), http.StatusInternalServerError)
 		return

@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS backup_runs (
 	database_id INTEGER NOT NULL DEFAULT 0,
 	dbname      TEXT NOT NULL,
 	driver      TEXT NOT NULL,
-	status      TEXT NOT NULL,               -- 'success' | 'error'
+	status      TEXT NOT NULL,               -- 'running' | 'success' | 'error'
 	message     TEXT NOT NULL DEFAULT '',
 	duration_ms INTEGER NOT NULL DEFAULT 0,
 	started_at  TEXT NOT NULL,

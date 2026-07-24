@@ -102,10 +102,34 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 	}
 
 	started := time.Now().In(loc)
+	// A local job starts running the instant we begin working on it here,
+	// so this is that row's real "Thời gian" — record it now rather than
+	// waiting for the job to finish. A remote-agent job can't be timed this
+	// way (it may sit queued behind others on the agent's own worker after
+	// being dispatched), so its StartedAt is left alone here and filled in
+	// below from what the agent itself reports, once the result is back.
+	if job.RunID != 0 && job.AgentID == 0 {
+		if err := reg.UpdateBackupRunStarted(ctx, job.RunID, started.Format("2006-01-02 15:04:05")); err != nil {
+			logErr("mark backup run %d started: %v", job.RunID, err)
+		}
+	}
+
 	result, jobErr := backupAndUpload(ctx, cfg, reg, loc, job)
+
 	duration := time.Since(started)
-	if jobErr == nil && result != nil && result.DurationMS > 0 {
-		duration = time.Duration(result.DurationMS) * time.Millisecond
+	startedAt := started.Format("2006-01-02 15:04:05")
+	if job.AgentID != 0 {
+		// Trust only what the agent itself reported (result may be non-nil
+		// even on failure — see remoteBackupAndUpload). If we never heard
+		// back from it at all (dispatch failure, timeout), there is
+		// genuinely no accurate start time to show, so leave it blank
+		// rather than showing this side's dispatch attempt as if it were
+		// the real thing.
+		startedAt = ""
+		if result != nil {
+			duration = time.Duration(result.DurationMS) * time.Millisecond
+			startedAt = result.StartedAt
+		}
 	}
 	if jobErr != nil {
 		logErr("%s: FAILED: %v", job.DBName, jobErr)
@@ -121,7 +145,7 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 		logErr("notify: look up %s: %v", job.DBName, err)
 	}
 
-	recordBackupRun(ctx, reg, d, job, started, duration, jobErr)
+	recordBackupRun(ctx, reg, d, job, startedAt, duration, jobErr)
 	if jobErr == nil {
 		recordBackupFile(ctx, reg, d, job, result)
 	}
@@ -136,16 +160,27 @@ func processJob(ctx context.Context, cfg *config.Config, reg *registry.Registry,
 	}
 }
 
-// recordBackupRun writes one entry to the admin UI's "Nhật ký" log, best
-// effort — a logging failure must never fail the job itself.
-func recordBackupRun(ctx context.Context, reg *registry.Registry, d *registry.Database, job queue.Job, started time.Time, duration time.Duration, jobErr error) {
-	var databaseID int64
-	if d != nil {
-		databaseID = d.ID
-	}
+// recordBackupRun finalizes this job's "Nhật ký" entry, best effort — a
+// logging failure must never fail the job itself. If the job was enqueued
+// with a RunID (the common case — see queue.Job.RunID), this updates that
+// same "running" row in place; otherwise it falls back to creating the row
+// now, same as every job did before this field existed.
+func recordBackupRun(ctx context.Context, reg *registry.Registry, d *registry.Database, job queue.Job, startedAt string, duration time.Duration, jobErr error) {
 	status, message := "success", ""
 	if jobErr != nil {
 		status, message = "error", jobErr.Error()
+	}
+
+	if job.RunID != 0 {
+		if err := reg.FinishBackupRun(ctx, job.RunID, status, message, duration.Milliseconds(), startedAt); err != nil {
+			logErr("finish backup run %d for %s: %v", job.RunID, job.DBName, err)
+		}
+		return
+	}
+
+	var databaseID int64
+	if d != nil {
+		databaseID = d.ID
 	}
 	run := registry.BackupRun{
 		DatabaseID: databaseID,
@@ -154,7 +189,7 @@ func recordBackupRun(ctx context.Context, reg *registry.Registry, d *registry.Da
 		Status:     status,
 		Message:    message,
 		DurationMS: duration.Milliseconds(),
-		StartedAt:  started.Format("2006-01-02 15:04:05"),
+		StartedAt:  startedAt,
 	}
 	if _, err := reg.CreateBackupRun(ctx, run); err != nil {
 		logErr("record backup run for %s: %v", job.DBName, err)
@@ -183,19 +218,24 @@ func recordBackupFile(ctx context.Context, reg *registry.Registry, d *registry.D
 }
 
 // uploadResult carries the details recordBackupFile needs, once
-// backupAndUpload's dump+upload has actually succeeded. DurationMS is only
-// set by the remote-agent path (see remoteBackupAndUpload) — the agent
-// measures its own dump-start-to-upload-done time, which is what
-// processJob prefers over its own wall-clock measurement so a job queued
-// behind others on a busy agent doesn't get logged with that queue wait
-// counted as backup time. Zero means "use the wall-clock duration instead"
-// (the local path's own timing is already accurate, since a local job never
-// waits behind another queued job before processJob starts timing it).
+// backupAndUpload's dump+upload has actually succeeded — Filename/
+// RemoteRef/SizeBytes/StorageTargetID are only meaningful then. StartedAt/
+// DurationMS, by contrast, are set by the remote-agent path
+// (remoteBackupAndUpload) even when it returns an error, as long as the
+// agent itself actually ran the job and reported back (as opposed to the
+// dispatch never reaching it, or timing out) — the agent measures its own
+// dump-start-to-upload-done time, which processJob prefers over its own
+// wall-clock measurement so a job queued behind others on a busy agent
+// doesn't get logged with that queue wait counted as backup time. Both are
+// left zero for the local path, which times itself in processJob instead
+// (a local job never waits behind another queued job before processJob
+// starts timing it, so there's nothing for it to correct for).
 type uploadResult struct {
 	Filename        string
 	RemoteRef       string
 	SizeBytes       int64
 	StorageTargetID int64
+	StartedAt       string
 	DurationMS      int64
 }
 
@@ -336,13 +376,19 @@ func remoteBackupAndUpload(ctx context.Context, reg *registry.Registry, loc *tim
 			continue
 		}
 		if !status.Success {
-			return nil, fmt.Errorf("agent %q: %s", agent.Label, status.Message)
+			// The agent did actually run this and reported back — surface
+			// its StartedAt/DurationMS alongside the error (unlike every
+			// other error return in this function, which never heard back
+			// from the agent at all and so has nothing accurate to report).
+			return &uploadResult{StartedAt: status.StartedAt, DurationMS: status.DurationMS},
+				fmt.Errorf("agent %q: %s", agent.Label, status.Message)
 		}
 		return &uploadResult{
 			Filename:        status.Filename,
 			RemoteRef:       status.RemoteRef,
 			SizeBytes:       status.SizeBytes,
 			StorageTargetID: job.StorageTargetID,
+			StartedAt:       status.StartedAt,
 			DurationMS:      status.DurationMS,
 		}, nil
 	}

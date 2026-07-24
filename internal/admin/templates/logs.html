@@ -13,7 +13,7 @@
   <div class="page-head">
     <div>
       <h1>Nhật ký backup</h1>
-      <p class="subtitle">Do consumer ghi lại sau mỗi job, thành công lẫn lỗi.</p>
+      <p class="subtitle">Ghi ngay khi có yêu cầu backup (Đang chạy), cập nhật lại khi consumer xử lý xong (Thành công/Lỗi).</p>
     </div>
     <div class="page-head-actions">
       {{if eq .Status "error"}}
@@ -39,11 +39,15 @@
   <tbody>
   {{range .Runs}}
   <tr>
-    <td class="nowrap">{{.StartedAt}}</td>
+    <td class="nowrap">{{if .StartedAt}}{{.StartedAt}}{{else}}<span class="hint">—</span>{{end}}</td>
     <td>{{.DBName}}</td>
     <td><span class="tag">{{.Driver}}</span></td>
-    <td>{{if eq .Status "success"}}<span class="badge on">Thành công</span>{{else}}<span class="badge danger">Lỗi</span>{{end}}</td>
-    <td>{{.Duration}}</td>
+    <td>
+      {{if eq .Status "success"}}<span class="badge on">Thành công</span>
+      {{else if eq .Status "running"}}<span class="badge pending">Đang chạy</span>
+      {{else}}<span class="badge danger">Lỗi</span>{{end}}
+    </td>
+    <td>{{if eq .Status "running"}}<span class="hint">—</span>{{else}}{{.Duration}}{{end}}</td>
     <td>{{if .Message}}{{.Message}}{{else}}<span class="hint">—</span>{{end}}</td>
   </tr>
   {{else}}

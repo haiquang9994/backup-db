@@ -50,7 +50,11 @@ type RunAccepted struct {
 }
 
 // RunStatus is what GET /run/{jobID} returns. Status is "pending" or
-// "done"; the rest is only meaningful once Status is "done".
+// "done"; the rest is only meaningful once Status is "done". StartedAt is
+// the agent's own wall-clock time it actually began this job (formatted in
+// the timezone RunRequest.Timezone named) — the central side has no way to
+// observe that moment itself, since this job may have sat queued behind
+// others on the agent's single worker for a while after being dispatched.
 type RunStatus struct {
 	Status     string `json:"status"`
 	Success    bool   `json:"success,omitempty"`
@@ -58,6 +62,7 @@ type RunStatus struct {
 	Filename   string `json:"filename,omitempty"`
 	RemoteRef  string `json:"remote_ref,omitempty"`
 	SizeBytes  int64  `json:"size_bytes,omitempty"`
+	StartedAt  string `json:"started_at,omitempty"`
 	DurationMS int64  `json:"duration_ms,omitempty"`
 }
 

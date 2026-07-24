@@ -1110,24 +1110,35 @@ func (r *Registry) SetDatabaseNotifyChannels(ctx context.Context, databaseID int
 	return nil
 }
 
-// BackupRun is one finished consumer job, success or error, shown on the
-// admin "Nhật ký" page. DatabaseID is 0 if the database has since been
-// deleted or renamed; DBName/Driver are captured as of run time so the log
-// stays meaningful either way.
+// BackupRun is one queued-or-finished job shown on the admin "Nhật ký"
+// page. DatabaseID is 0 if the database has since been deleted or renamed;
+// DBName/Driver are captured as of run time so the log stays meaningful
+// either way. A row is created with Status "running" and StartedAt empty
+// the moment a job is enqueued (see queue.Job.RunID), then updated in
+// place as it progresses: UpdateBackupRunStarted fills in StartedAt once
+// the job actually begins running (immediately for a local job; only once
+// the result comes back for one dispatched to a remote agent, since the
+// agent may queue it behind others — see cmd/backupdb/consumer.go's
+// processJob), and FinishBackupRun transitions it to "success"/"error" once
+// it completes.
 type BackupRun struct {
 	ID         int64
 	DatabaseID int64
 	DBName     string
 	Driver     string
-	Status     string // "success" | "error"
+	Status     string // "running" | "success" | "error"
 	Message    string
 	DurationMS int64
 	StartedAt  string
 	CreatedAt  string
 }
 
-// CreateBackupRun records one finished job. Called by the consumer after
-// every job, success or failure.
+// CreateBackupRun inserts a new "Nhật ký" row. Most callers use it at
+// enqueue time (Status "running", StartedAt "") so a request is visible
+// immediately, before it's even started — see BackupRun's doc comment. The
+// consumer also uses it directly as a fallback, already-finished row for a
+// job pushed without a RunID (the ad-hoc `backup <dbname>` CLI path has no
+// registry to create one from up front).
 func (r *Registry) CreateBackupRun(ctx context.Context, run BackupRun) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO backup_runs (database_id, dbname, driver, status, message, duration_ms, started_at)
@@ -1138,6 +1149,35 @@ func (r *Registry) CreateBackupRun(ctx context.Context, run BackupRun) (int64, e
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// UpdateBackupRunStarted records the real wall-clock time a "running" row
+// (see CreateBackupRun) actually began processing — a job can sit queued
+// for a while before that, so enqueue time on its own is not a reliable
+// "Thời gian" value.
+func (r *Registry) UpdateBackupRunStarted(ctx context.Context, id int64, startedAt string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE backup_runs SET started_at = ? WHERE id = ?", startedAt, id)
+	return err
+}
+
+// FinishBackupRun transitions a "running" row to its final status once the
+// job completes. startedAt is only written when non-empty, so a local job's
+// StartedAt — already set by UpdateBackupRunStarted the moment the consumer
+// began processing it — isn't blanked out by a caller with nothing new to
+// report (the remote-agent path, by contrast, never calls
+// UpdateBackupRunStarted at all and passes its StartedAt here instead, once
+// the agent's result comes back).
+func (r *Registry) FinishBackupRun(ctx context.Context, id int64, status, message string, durationMS int64, startedAt string) error {
+	if startedAt == "" {
+		_, err := r.db.ExecContext(ctx,
+			"UPDATE backup_runs SET status = ?, message = ?, duration_ms = ? WHERE id = ?",
+			status, message, durationMS, id)
+		return err
+	}
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE backup_runs SET status = ?, message = ?, duration_ms = ?, started_at = ? WHERE id = ?",
+		status, message, durationMS, startedAt, id)
+	return err
 }
 
 // backupRunFilter builds the shared WHERE clause for ListBackupRuns and

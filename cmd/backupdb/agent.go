@@ -250,10 +250,22 @@ func (s *jobStore) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *jobStore) run(ctx context.Context, jobID string, req agentproto.RunRequest) {
-	start := time.Now()
-	result, err := runBackupJob(ctx, s.cfg, req)
+	// The central server has no way to know when this job actually starts
+	// running — it may sit queued behind others on this agent's single
+	// worker for a while after being dispatched — so it relies on this
+	// timestamp (StartedAt below) instead of timing the dispatch itself.
+	loc, err := time.LoadLocation(req.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	start := time.Now().In(loc)
+	result, err := runBackupJob(ctx, s.cfg, req, loc)
 
-	status := agentproto.RunStatus{Status: "done", DurationMS: time.Since(start).Milliseconds()}
+	status := agentproto.RunStatus{
+		Status:     "done",
+		StartedAt:  start.Format("2006-01-02 15:04:05"),
+		DurationMS: time.Since(start).Milliseconds(),
+	}
 	if err != nil {
 		status.Success = false
 		status.Message = err.Error()
@@ -307,7 +319,7 @@ type backupResult struct {
 // needs the central registry: no storage_target_id lookup (the caller
 // resolves and sends the full config), no backup_runs/backup_files
 // recording (the central server does that once it polls this result back).
-func runBackupJob(ctx context.Context, cfg *config.Config, req agentproto.RunRequest) (*backupResult, error) {
+func runBackupJob(ctx context.Context, cfg *config.Config, req agentproto.RunRequest, loc *time.Location) (*backupResult, error) {
 	params := dump.ParseParams(req.Params)
 
 	ext, err := dump.Extension(req.Driver)
@@ -316,12 +328,9 @@ func runBackupJob(ctx context.Context, cfg *config.Config, req agentproto.RunReq
 	}
 
 	// The agent runs on a different machine, possibly in a different OS
-	// timezone — filenames must use the central deployment's configured
-	// zone (sent along on every request), not this host's local clock.
-	loc, err := time.LoadLocation(req.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
+	// timezone — filenames use the central deployment's configured zone
+	// (loc, resolved by the caller from RunRequest.Timezone), not this
+	// host's local clock.
 	date := time.Now().In(loc).Format("060102")
 	stamp := time.Now().In(loc).Format("15h04")
 	filename := fmt.Sprintf("%s_%s_%s.%s.gz", req.DBName, date, stamp, ext)

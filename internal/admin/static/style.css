@@ -264,6 +264,7 @@ td.empty-state {
 .badge.on { background: var(--success-soft); color: var(--success); }
 .badge.off { background: var(--border); color: var(--muted); }
 .badge.danger { background: var(--danger-soft); color: var(--danger); }
+.badge.pending { background: var(--accent-soft); color: var(--accent); }
 
 .tag {
   display: inline-flex;

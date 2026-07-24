@@ -24,14 +24,23 @@ type Job struct {
 	// remote_agents row over HTTPS instead of running it itself, and only
 	// polls for the result. See internal/agentproto.
 	AgentID int64 `json:"agent_id"`
+	// RunID is the registry.BackupRun row created (Status "running") when
+	// this job was enqueued, so the request shows up in the admin UI's
+	// "Nhật ký" page immediately instead of only once it's done — the
+	// consumer updates that same row in place as the job progresses/
+	// finishes instead of creating a new one. 0 for a job pushed without
+	// registry access to create one from (the ad-hoc `backup <dbname>` CLI
+	// path), in which case the consumer falls back to creating the row only
+	// once the job finishes, same as before this field existed.
+	RunID int64 `json:"run_id"`
 }
 
 // NewBackupJob builds the Job for one database's backup, packing its
 // connection details into the pipe-delimited Params string that
 // dump.ParseParams expects on the consumer side.
-func NewBackupJob(dbname, driver, host, port, username, password, authDB string, storageTargetID, agentID int64) Job {
+func NewBackupJob(dbname, driver, host, port, username, password, authDB string, storageTargetID, agentID, runID int64) Job {
 	params := fmt.Sprintf("%s|%s|%s|%s|%s", host, port, username, password, authDB)
-	return Job{Cmd: "backup", DBName: dbname, Driver: driver, Params: params, StorageTargetID: storageTargetID, AgentID: agentID}
+	return Job{Cmd: "backup", DBName: dbname, Driver: driver, Params: params, StorageTargetID: storageTargetID, AgentID: agentID, RunID: runID}
 }
 
 type Client struct {
