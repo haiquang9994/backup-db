@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BackupDB — Đăng nhập</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+<main class="login-main">
+  <div class="card login-card">
+    <div class="login-brand">{{template "icon-database"}} BackupDB</div>
+    <h1>Đăng nhập quản trị</h1>
+    {{if .LoggedOut}}<p class="hint">Đã đăng xuất.</p>{{end}}
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    <form method="post" action="/login" class="form">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <label>Tên đăng nhập
+        <input type="text" name="username" autofocus autocomplete="username" required>
+      </label>
+      <label>Mật khẩu
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="primary">Đăng nhập</button>
+      </div>
+    </form>
+  </div>
+</main>
+</body>
+</html>

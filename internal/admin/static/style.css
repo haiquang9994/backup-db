@@ -398,6 +398,29 @@ form.form button[type="submit"]:hover { filter: brightness(1.08); color: var(--a
   margin-bottom: 1.5rem;
 }
 
+/* ---- login page ------------------------------------------------------ */
+
+body.login-page {
+  display: flex;
+  min-height: 100vh;
+  margin: 0;
+}
+.login-main {
+  margin: auto;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 380px;
+}
+.login-card { margin-bottom: 0; }
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  color: var(--fg);
+  margin-bottom: 1rem;
+}
+
 hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
 
 ol { color: var(--muted); font-size: 0.9rem; line-height: 1.6; padding-left: 1.2rem; }

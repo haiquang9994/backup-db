@@ -24,7 +24,7 @@ func runAdmin(args []string) error {
 	defer q.Close()
 
 	if cfg.AdminUsername == "" || cfg.AdminPassword == "" {
-		log.Println("WARNING: ADMIN_USERNAME/ADMIN_PASSWORD not set — admin UI is running WITHOUT authentication")
+		log.Println("WARNING: ADMIN_USERNAME/ADMIN_PASSWORD not set — admin UI is disabled, every request will get 404")
 	}
 
 	srv := admin.NewServer(cfg, reg, q, cfg.AdminUsername, cfg.AdminPassword, cfg.GoogleCredentialsFile, cfg.Timezone)

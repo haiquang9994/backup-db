@@ -1,6 +1,8 @@
-// Package admin serves a small Basic-Auth-protected web UI for managing the
-// list of databases to back up, their backup schedules, and the storage
-// destinations (Google Drive accounts, S3 buckets) they upload to.
+// Package admin serves a small web UI, protected by a login form + session
+// cookie, for managing the list of databases to back up, their backup
+// schedules, and the storage destinations (Google Drive accounts, S3
+// buckets) they upload to. If ADMIN_USERNAME/ADMIN_PASSWORD aren't set, the
+// whole UI is disabled (every request gets 404) rather than left open.
 package admin
 
 import (
@@ -43,6 +45,7 @@ type Server struct {
 	googleCredentialsFile string
 	timezone              string
 	cfg                   *config.Config // needed to build storage.Provider for file downloads
+	sessions              *sessionStore
 }
 
 func NewServer(cfg *config.Config, reg *registry.Registry, q *queue.Client, username, password, googleCredentialsFile, timezone string) *Server {
@@ -54,6 +57,7 @@ func NewServer(cfg *config.Config, reg *registry.Registry, q *queue.Client, user
 		googleCredentialsFile: googleCredentialsFile,
 		timezone:              timezone,
 		cfg:                   cfg,
+		sessions:              newSessionStore(),
 	}
 }
 
@@ -62,6 +66,10 @@ func (s *Server) Handler() http.Handler {
 
 	staticSub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+
+	mux.HandleFunc("GET /login", s.handleLoginForm)
+	mux.HandleFunc("POST /login", s.handleLoginSubmit)
+	mux.HandleFunc("GET /logout", s.handleLogout)
 
 	mux.HandleFunc("GET /{$}", s.handleList)
 	mux.HandleFunc("GET /new", s.handleNewForm)
@@ -111,25 +119,129 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /databases/{id}/files", s.handleDatabaseFiles)
 	mux.HandleFunc("GET /databases/{id}/files/{fileID}/download", s.handleDatabaseFileDownload)
 
-	return s.basicAuth(mux)
+	return s.requireAuth(mux)
 }
 
-func (s *Server) basicAuth(next http.Handler) http.Handler {
+// requireAuth gates every route except the login form, the login submit
+// handler, and static assets (the login page itself needs its CSS/favicon)
+// behind a valid session cookie. If ADMIN_USERNAME/ADMIN_PASSWORD aren't
+// configured, every request — including /login — gets 404, so the admin UI
+// is fully unusable rather than left open.
+func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.username == "" || s.password == "" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == "/login" || r.URL.Path == "/logout" || strings.HasPrefix(r.URL.Path, "/static/") {
 			next.ServeHTTP(w, r)
 			return
 		}
-		user, pass, ok := r.BasicAuth()
-		userOK := subtle.ConstantTimeCompare([]byte(user), []byte(s.username)) == 1
-		passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(s.password)) == 1
-		if !ok || !userOK || !passOK {
-			w.Header().Set("WWW-Authenticate", `Basic realm="backupdb admin"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil || !s.sessions.valid(cookie.Value) {
+			redirectToLogin(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func redirectToLogin(w http.ResponseWriter, r *http.Request) {
+	next := sanitizeNext(r.URL.RequestURI())
+	target := "/login"
+	if next != "" {
+		target += "?next=" + url.QueryEscape(next)
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
+// sanitizeNext only allows redirecting back to a relative, same-site path,
+// to avoid an open-redirect via the "next" parameter, and never back to
+// /login itself.
+func sanitizeNext(next string) string {
+	if next == "" || next == "/login" || strings.HasPrefix(next, "//") || !strings.HasPrefix(next, "/") {
+		return ""
+	}
+	return next
+}
+
+type loginPageData struct {
+	Next      string
+	Error     string
+	LoggedOut bool
+}
+
+func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
+	if s.username == "" || s.password == "" {
+		http.NotFound(w, r)
+		return
+	}
+	next := sanitizeNext(r.URL.Query().Get("next"))
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && s.sessions.valid(cookie.Value) {
+		target := next
+		if target == "" {
+			target = "/"
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
+		return
+	}
+	data := loginPageData{Next: next, LoggedOut: r.URL.Query().Get("logged_out") == "1"}
+	if err := tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
+		log.Println("render login:", err)
+	}
+}
+
+func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	if s.username == "" || s.password == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	next := sanitizeNext(r.FormValue("next"))
+	user := r.FormValue("username")
+	pass := r.FormValue("password")
+	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(s.username)) == 1
+	passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(s.password)) == 1
+	if !userOK || !passOK {
+		if err := tmpl.ExecuteTemplate(w, "login.html", loginPageData{Next: next, Error: "Sai tên đăng nhập hoặc mật khẩu."}); err != nil {
+			log.Println("render login:", err)
+		}
+		return
+	}
+
+	token := s.sessions.create()
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  time.Now().Add(sessionTTL),
+	})
+	target := next
+	if target == "" {
+		target = "/"
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		s.sessions.delete(cookie.Value)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.Redirect(w, r, "/login?logged_out=1", http.StatusFound)
 }
 
 type formData struct {
