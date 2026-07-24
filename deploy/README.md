@@ -44,6 +44,13 @@ Dùng khi database nằm trên 1 server hoàn toàn khác (nhà cung cấp khác
    ./deploy/deploy-agent.sh
    ```
    Các biến giống hệt `deploy.sh` (`DEPLOY_HOST`, `DEPLOY_PATH`, `DOCKER_PLATFORM` tuỳ chọn) — chỉ khác ở bước cuối, chạy `docker compose -f docker-compose.agent.yml up -d` thay vì `docker compose up -d`.
+
+   Deploy cùng lúc cho nhiều agent server: dùng `DEPLOY_TARGETS` (danh sách `host:path` cách nhau bởi khoảng trắng) thay cho `DEPLOY_HOST`/`DEPLOY_PATH` — image chỉ build/save **một lần**, sau đó lần lượt upload+load cho từng host:
+   ```bash
+   DEPLOY_TARGETS="root@a2:/root/backupdb root@oss:/root/backupdb" \
+   ./deploy/deploy-agent.sh
+   ```
+   Xem `local/deploy_agents.sh` để tham khảo.
 4. Script tự in ra lệnh xem log lúc xong — chạy nó để lấy dòng **"Agent certificate fingerprint"** ở lần chạy đầu tiên, copy giá trị này.
 5. Vào admin UI (server chính) → trang **Agent từ xa** → Thêm agent: điền endpoint (`https://ip-hoặc-domain:AGENT_PORT`), token (giống hệt `AGENT_TOKEN`), và fingerprint vừa lấy.
 6. Vào trang Sửa database cần backup từ xa → mục "Chạy backup trên" → chọn agent vừa thêm.
