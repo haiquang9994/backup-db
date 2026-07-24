@@ -92,37 +92,33 @@ if (navLinks.length) {
   active?.classList.add("active");
 }
 
-// Logs page "Chỉ hiện lỗi" button — pure client-side row filter, the page
-// already has every row loaded so there's no need for a server round-trip.
-const logsFilterBtn = document.getElementById("logs-filter-error");
-if (logsFilterBtn) {
-  const rows = document.querySelectorAll("table tbody tr[data-status]");
-  let errorsOnly = false;
-  logsFilterBtn.addEventListener("click", () => {
-    errorsOnly = !errorsOnly;
-    rows.forEach((row) => {
-      row.style.display = errorsOnly && row.dataset.status === "success" ? "none" : "";
-    });
-    logsFilterBtn.classList.toggle("primary", errorsOnly);
-    setLabel(logsFilterBtn, errorsOnly ? "Hiện tất cả" : "Chỉ hiện lỗi");
-  });
-}
-
-// Databases page "Chưa có lịch" button — same client-side row filter as the
-// logs page's, but keyed off data-has-schedule (server-computed from own
-// schedules + shared-schedule membership, see listDatabaseView in server.go).
+// Databases page toolbar: "Chưa có lịch" toggle + search-by-name input.
+// Both are client-side — the whole list is already loaded in one page (no
+// pagination here, unlike the logs page) — a row shows only when it passes
+// every currently active filter.
 const dbFilterBtn = document.getElementById("databases-filter-unscheduled");
-if (dbFilterBtn) {
+const dbSearchInput = document.getElementById("databases-search");
+if (dbFilterBtn || dbSearchInput) {
   const rows = document.querySelectorAll("table tbody tr[data-has-schedule]");
   let unscheduledOnly = false;
-  dbFilterBtn.addEventListener("click", () => {
-    unscheduledOnly = !unscheduledOnly;
+
+  const applyDbFilters = () => {
+    const q = dbSearchInput?.value.trim().toLowerCase() || "";
     rows.forEach((row) => {
-      row.style.display = unscheduledOnly && row.dataset.hasSchedule === "true" ? "none" : "";
+      const passesSchedule = !unscheduledOnly || row.dataset.hasSchedule !== "true";
+      const passesSearch = !q || row.dataset.name.toLowerCase().includes(q);
+      row.style.display = passesSchedule && passesSearch ? "" : "none";
     });
+  };
+
+  dbFilterBtn?.addEventListener("click", () => {
+    unscheduledOnly = !unscheduledOnly;
     dbFilterBtn.classList.toggle("primary", unscheduledOnly);
     setLabel(dbFilterBtn, unscheduledOnly ? "Hiện tất cả" : "Chưa có lịch");
+    applyDbFilters();
   });
+
+  dbSearchInput?.addEventListener("input", applyDbFilters);
 }
 
 // "Nhân bản" button on each row of the databases list: same /new?data=...

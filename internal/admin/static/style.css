@@ -155,6 +155,58 @@ h2 {
   margin-bottom: 1.5rem;
 }
 
+/* ---- table-page shell -------------------------------------------------
+   Opt-in via <body class="table-page"> for list pages whose table can grow
+   long: the viewport height is fixed and only .table-wrap scrolls, so
+   .page-head / .list-toolbar / .back-link stay on screen instead of
+   requiring a scroll down to reach filter/pagination controls. */
+
+body.table-page {
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+body.table-page .topbar { flex-shrink: 0; }
+body.table-page main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 1.5rem;
+}
+body.table-page .page-head,
+body.table-page .list-toolbar,
+body.table-page .back-link {
+  flex-shrink: 0;
+}
+body.table-page .table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-bottom: 0; /* .back-link's margin-top already spaces the two apart */
+}
+
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.list-toolbar .search-input {
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-bg);
+  color: var(--fg);
+  font-size: 0.9rem;
+  min-width: 260px;
+}
+.list-toolbar .search-input:focus { border-color: var(--accent); outline: none; }
+.list-toolbar .pagination { margin-top: 0; justify-content: flex-end; }
+
 table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
 
 th {

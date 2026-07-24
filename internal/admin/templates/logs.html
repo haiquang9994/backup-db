@@ -7,18 +7,30 @@
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="table-page">
 {{template "topbar"}}
 <main>
   <div class="page-head">
     <div>
       <h1>Nhật ký backup</h1>
-      <p class="subtitle">Do consumer ghi lại sau mỗi job, thành công lẫn lỗi. Trang {{.Pagination.Page}}/{{.Pagination.TotalPages}}, tổng {{.Pagination.Total}} lần chạy.</p>
+      <p class="subtitle">Do consumer ghi lại sau mỗi job, thành công lẫn lỗi.</p>
     </div>
     <div class="page-head-actions">
-      <button type="button" id="logs-filter-error">{{template "icon-filter"}} <span class="label">Chỉ hiện lỗi</span></button>
+      {{if eq .Status "error"}}
+      <a class="button primary" href="{{.ToggleStatusURL}}">{{template "icon-filter"}} <span class="label">Hiện tất cả</span></a>
+      {{else}}
+      <a class="button" href="{{.ToggleStatusURL}}">{{template "icon-filter"}} <span class="label">Chỉ hiện lỗi</span></a>
+      {{end}}
       <button type="button" class="danger" data-action="/logs/clear" data-ajax="reload" data-confirm="Xoá toàn bộ nhật ký? Không thể hoàn tác.">{{template "icon-trash"}} Xoá toàn bộ nhật ký</button>
     </div>
+  </div>
+
+  <div class="list-toolbar">
+    <form method="GET" action="/logs">
+      {{if eq .Status "error"}}<input type="hidden" name="status" value="error">{{end}}
+      <input type="search" name="q" value="{{.Query}}" placeholder="Tìm theo tên database…" class="search-input">
+    </form>
+    {{template "pagination" .Pagination}}
   </div>
 
   <div class="table-wrap">
@@ -26,7 +38,7 @@
   <thead><tr><th>Thời gian</th><th>Database</th><th>Driver</th><th>Trạng thái</th><th>Thời lượng</th><th>Chi tiết</th></tr></thead>
   <tbody>
   {{range .Runs}}
-  <tr data-status="{{.Status}}">
+  <tr>
     <td class="nowrap">{{.StartedAt}}</td>
     <td>{{.DBName}}</td>
     <td><span class="tag">{{.Driver}}</span></td>
@@ -35,13 +47,11 @@
     <td>{{if .Message}}{{.Message}}{{else}}<span class="hint">—</span>{{end}}</td>
   </tr>
   {{else}}
-  <tr><td class="empty-state" colspan="6">Chưa có nhật ký nào — sẽ xuất hiện sau lần backup đầu tiên.</td></tr>
+  <tr><td class="empty-state" colspan="6">{{if or (eq $.Status "error") $.Query}}Không tìm thấy nhật ký phù hợp.{{else}}Chưa có nhật ký nào — sẽ xuất hiện sau lần backup đầu tiên.{{end}}</td></tr>
   {{end}}
   </tbody>
   </table>
   </div>
-
-  {{template "pagination" .Pagination}}
 
   <a class="back-link" href="/">{{template "icon-back"}} Quay lại danh sách database</a>
 </main>

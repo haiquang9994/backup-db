@@ -47,14 +47,15 @@
 
 {{/* Reusable pager: pass a .Pagination (internal/admin.Pagination) as dot.
      Renders nothing when everything fits on one page. Prev/Next link to
-     .BaseURL+"?page=N"; any page-scoped filters a future caller adds to
-     BaseURL just need to be included there, e.g. "/logs?status=error". */}}
+     .BaseURL+.PageSep+"page=N"; a page-scoped filter a caller adds to
+     BaseURL (e.g. "/logs?status=error") is preserved across pages since
+     PageSep switches to "&" whenever BaseURL already has a "?". */}}
 {{define "pagination"}}
 {{if gt .TotalPages 1}}
 <nav class="pagination">
-  {{if .HasPrev}}<a class="button" href="{{.BaseURL}}?page={{.PrevPage}}">{{template "icon-chevron-left"}} Trước</a>{{else}}<span class="button" disabled>{{template "icon-chevron-left"}} Trước</span>{{end}}
+  {{if .HasPrev}}<a class="button" href="{{.BaseURL}}{{.PageSep}}page={{.PrevPage}}">{{template "icon-chevron-left"}} Trước</a>{{else}}<span class="button" disabled>{{template "icon-chevron-left"}} Trước</span>{{end}}
   <span class="pagination-info">Trang {{.Page}}/{{.TotalPages}} — {{.Total}} dòng</span>
-  {{if .HasNext}}<a class="button" href="{{.BaseURL}}?page={{.NextPage}}">Sau {{template "icon-chevron-right"}}</a>{{else}}<span class="button" disabled>Sau {{template "icon-chevron-right"}}</span>{{end}}
+  {{if .HasNext}}<a class="button" href="{{.BaseURL}}{{.PageSep}}page={{.NextPage}}">Sau {{template "icon-chevron-right"}}</a>{{else}}<span class="button" disabled>Sau {{template "icon-chevron-right"}}</span>{{end}}
 </nav>
 {{end}}
 {{end}}

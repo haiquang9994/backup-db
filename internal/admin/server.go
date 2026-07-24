@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -1256,15 +1257,50 @@ type logRunView struct {
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	total, err := s.reg.CountBackupRuns(r.Context())
+	status := r.URL.Query().Get("status")
+	if status != "error" {
+		status = "" // only "error" is a supported filter; anything else means "all"
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	// filterParams carries every active filter except "page" — reused as the
+	// base for both the pagination links (page gets appended) and the
+	// "Chỉ hiện lỗi" toggle link (which drops/adds status but always starts
+	// back at page 1), so a filter never gets silently dropped when the user
+	// pages through results or flips the status toggle.
+	filterParams := url.Values{}
+	if status != "" {
+		filterParams.Set("status", status)
+	}
+	if query != "" {
+		filterParams.Set("q", query)
+	}
+	baseURL := "/logs"
+	if len(filterParams) > 0 {
+		baseURL = "/logs?" + filterParams.Encode()
+	}
+
+	toggleParams := url.Values{}
+	if query != "" {
+		toggleParams.Set("q", query)
+	}
+	if status != "error" {
+		toggleParams.Set("status", "error")
+	}
+	toggleStatusURL := "/logs"
+	if len(toggleParams) > 0 {
+		toggleStatusURL = "/logs?" + toggleParams.Encode()
+	}
+
+	total, err := s.reg.CountBackupRuns(r.Context(), status, query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	pagination := newPagination(page, total, s.cfg.LogListLimit, "/logs")
+	pagination := newPagination(page, total, s.cfg.LogListLimit, baseURL)
 
-	runs, err := s.reg.ListBackupRuns(r.Context(), s.cfg.LogListLimit, pagination.Offset(s.cfg.LogListLimit))
+	runs, err := s.reg.ListBackupRuns(r.Context(), s.cfg.LogListLimit, pagination.Offset(s.cfg.LogListLimit), status, query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1275,9 +1311,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		views[i] = logRunView{BackupRun: run, Duration: d.String()}
 	}
 	data := struct {
-		Runs       []logRunView
-		Pagination Pagination
-	}{views, pagination}
+		Runs            []logRunView
+		Pagination      Pagination
+		Status          string
+		Query           string
+		ToggleStatusURL string
+	}{views, pagination, status, query, toggleStatusURL}
 	if err := tmpl.ExecuteTemplate(w, "logs.html", data); err != nil {
 		log.Println("render logs:", err)
 	}

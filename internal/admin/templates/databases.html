@@ -7,7 +7,7 @@
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="table-page">
 {{template "topbar"}}
 <main>
   <div class="page-head">
@@ -21,6 +21,10 @@
     </div>
   </div>
 
+  <div class="list-toolbar">
+    <input type="search" id="databases-search" class="search-input" placeholder="Tìm theo tên database…">
+  </div>
+
   <div class="table-wrap">
   <table>
   <thead>
@@ -28,7 +32,7 @@
   </thead>
   <tbody>
   {{range .}}
-  <tr data-has-schedule="{{.HasSchedule}}">
+  <tr data-has-schedule="{{.HasSchedule}}" data-name="{{.Name}}">
     <td>{{.Name}}</td>
     <td><span class="tag">{{.Driver}}</span></td>
     <td>{{.Host}}</td>

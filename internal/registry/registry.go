@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -1139,13 +1140,45 @@ func (r *Registry) CreateBackupRun(ctx context.Context, run BackupRun) (int64, e
 	return res.LastInsertId()
 }
 
+// backupRunFilter builds the shared WHERE clause for ListBackupRuns and
+// CountBackupRuns, so the two never drift apart and paginate against a
+// different result set than they count. status filters to that exact value
+// ("success" or "error") when non-empty; dbnameQuery matches dbname
+// case-insensitively via SQL LIKE substring match, when non-empty.
+func backupRunFilter(status, dbnameQuery string) (clause string, args []any) {
+	var conds []string
+	if status != "" {
+		conds = append(conds, "status = ?")
+		args = append(args, status)
+	}
+	if dbnameQuery != "" {
+		conds = append(conds, "dbname LIKE ? ESCAPE '\\'")
+		args = append(args, "%"+likeEscape(dbnameQuery)+"%")
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// likeEscape escapes SQL LIKE wildcards in user input so a literal "%" or
+// "_" typed into the search box is matched literally instead of acting as a
+// wildcard.
+func likeEscape(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
 // ListBackupRuns returns one page of runs, newest first — backs the admin
-// UI's "Nhật ký" page.
-func (r *Registry) ListBackupRuns(ctx context.Context, limit, offset int) ([]BackupRun, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, database_id, dbname, driver, status, message, duration_ms, started_at, created_at FROM backup_runs ORDER BY id DESC LIMIT ? OFFSET ?",
-		limit, offset,
-	)
+// UI's "Nhật ký" page. See backupRunFilter for the status/dbnameQuery
+// filtering rules.
+func (r *Registry) ListBackupRuns(ctx context.Context, limit, offset int, status, dbnameQuery string) ([]BackupRun, error) {
+	whereClause, args := backupRunFilter(status, dbnameQuery)
+	query := "SELECT id, database_id, dbname, driver, status, message, duration_ms, started_at, created_at FROM backup_runs" +
+		whereClause + " ORDER BY id DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1162,11 +1195,14 @@ func (r *Registry) ListBackupRuns(ctx context.Context, limit, offset int) ([]Bac
 	return out, rows.Err()
 }
 
-// CountBackupRuns returns the total number of rows in backup_runs, used to
-// compute the "Nhật ký" page's total page count.
-func (r *Registry) CountBackupRuns(ctx context.Context) (int, error) {
+// CountBackupRuns returns the number of rows in backup_runs matching the
+// same status/dbnameQuery filter as ListBackupRuns (or the grand total, when
+// both are empty) — used to compute the "Nhật ký" page's total page count,
+// so pagination always stays consistent with whatever filter was applied.
+func (r *Registry) CountBackupRuns(ctx context.Context, status, dbnameQuery string) (int, error) {
+	whereClause, args := backupRunFilter(status, dbnameQuery)
 	var count int
-	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM backup_runs").Scan(&count)
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM backup_runs"+whereClause, args...).Scan(&count)
 	return count, err
 }
 
