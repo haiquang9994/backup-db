@@ -24,9 +24,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gnupg \
         tzdata \
         libpq5 \
+        # Not for mariadb-dump's own linking (it statically links the client
+        # library) but for the auth plugins it dlopens at connect time from
+        # /usr/lib/<triplet>/libmariadb3/plugin/. Without it, any MySQL 8
+        # server fails with "Plugin caching_sha2_password could not be
+        # loaded" — MySQL 5.7's mysql_native_password needs no plugin, which
+        # is why this stayed hidden for a while. Installed properly rather
+        # than extracted like the three dump binaries below: it drags in no
+        # perl (just mysql-common/mariadb-common/libssl3, ~534KB), and apt
+        # puts the plugins under the target architecture's triplet for us.
+        libmariadb3 \
     && curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc \
         | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/7.0 main" \
+    # Ubuntu repo, not the Debian one, on purpose — do not "fix" this back:
+    # MongoDB publishes mongodb-database-tools for Debian bookworm on amd64
+    # only, so an arm64 build fails here with "Unable to locate package"
+    # (apt exit 100). The Ubuntu jammy repo ships both amd64 and arm64, and
+    # its jammy glibc 2.35 build runs fine on bookworm's 2.36. We only
+    # `apt-get download` from it (never install), so no Ubuntu dependency
+    # leaks into the image; mongodump's one extra shared lib,
+    # libgssapi_krb5.so.2, already comes in via libpq5 above.
+    && echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" \
         > /etc/apt/sources.list.d/mongodb-org-7.0.list \
     && apt-get update \
     # mariadb-client, postgresql-client-15, and mongodb-database-tools all
